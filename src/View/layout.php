@@ -2,6 +2,7 @@
 
 function lanter_render_layout(string $title, string $content, array $tables = [], ?string $activeTable = null): void
 {
+    $currentAction = $_GET['action'] ?? 'dashboard';
     ?><!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -28,12 +29,13 @@ function lanter_render_layout(string $title, string $content, array $tables = []
 <a class="lanter-logout" href="?action=logout">Sair</a>
 </aside>
 <main class="lanter-main">
-<?php if ($activeTable !== null): ?>
 <nav class="lanter-tabs">
-<a class="lanter-tab-link" href="?action=dashboard&amp;table=<?= urlencode($activeTable) ?>">Dados</a>
-<a class="lanter-tab-link" href="?action=table_structure&amp;table=<?= urlencode($activeTable) ?>">Estrutura</a>
-</nav>
+<?php if ($activeTable !== null): ?>
+<a class="lanter-tab-link<?= $currentAction === 'dashboard' ? ' active' : '' ?>" href="?action=dashboard&amp;table=<?= urlencode($activeTable) ?>">Dados</a>
+<a class="lanter-tab-link<?= $currentAction === 'table_structure' ? ' active' : '' ?>" href="?action=table_structure&amp;table=<?= urlencode($activeTable) ?>">Estrutura</a>
 <?php endif; ?>
+<a class="lanter-tab-link<?= $currentAction === 'sql' ? ' active' : '' ?>" href="?action=sql">SQL</a>
+</nav>
 <?= $content ?>
 </main>
 </div>
