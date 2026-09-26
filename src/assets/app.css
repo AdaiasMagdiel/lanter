@@ -157,17 +157,32 @@ a {
 }
 
 .lanter-field input,
-.lanter-field select {
+.lanter-field select,
+.lanter-field textarea {
     background: var(--bg);
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 8px 10px;
     color: var(--text);
     font-size: 13px;
+    font-family: inherit;
+}
+
+.lanter-field textarea {
+    resize: vertical;
+    font-family: var(--font-mono);
+}
+
+.lanter-field input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    accent-color: var(--brand);
 }
 
 .lanter-field input:focus,
-.lanter-field select:focus {
+.lanter-field select:focus,
+.lanter-field textarea:focus {
     outline: none;
     border-color: var(--brand);
 }
