@@ -11,9 +11,9 @@ interface Lanter_DriverInterface
     public function describeTable(string $table): array;
 
     /** @return array<int, array<string, mixed>> */
-    public function fetchRows(string $table, int $limit, int $offset): array;
+    public function fetchRows(string $table, int $limit, int $offset, ?string $search = null): array;
 
-    public function countRows(string $table): int;
+    public function countRows(string $table, ?string $search = null): int;
 
     public function insertRow(string $table, array $data): void;
 

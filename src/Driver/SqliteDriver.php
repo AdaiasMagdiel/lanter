@@ -40,23 +40,53 @@ class Lanter_SqliteDriver implements Lanter_DriverInterface
         return $columns;
     }
 
-    public function fetchRows(string $table, int $limit, int $offset): array
+    public function fetchRows(string $table, int $limit, int $offset, ?string $search = null): array
     {
+        [$where, $params] = $this->buildSearchClause($table, $search);
+
         $sql = sprintf(
-            'SELECT * FROM %s LIMIT %d OFFSET %d',
+            'SELECT * FROM %s%s LIMIT %d OFFSET %d',
             $this->quoteIdentifier($table),
+            $where,
             $limit,
             $offset
         );
 
-        return $this->pdo->query($sql)->fetchAll();
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+
+        return $stmt->fetchAll();
     }
 
-    public function countRows(string $table): int
+    public function countRows(string $table, ?string $search = null): int
     {
-        $stmt = $this->pdo->query('SELECT COUNT(*) AS total FROM ' . $this->quoteIdentifier($table));
+        [$where, $params] = $this->buildSearchClause($table, $search);
+
+        $stmt = $this->pdo->prepare('SELECT COUNT(*) AS total FROM ' . $this->quoteIdentifier($table) . $where);
+        $stmt->execute($params);
 
         return (int) $stmt->fetch()['total'];
+    }
+
+    /** @return array{0: string, 1: array<string, string>} */
+    private function buildSearchClause(string $table, ?string $search): array
+    {
+        if ($search === null || $search === '') {
+            return ['', []];
+        }
+
+        $columns = array_column($this->describeTable($table), 'name');
+
+        if ($columns === []) {
+            return ['', []];
+        }
+
+        $conditions = array_map(
+            fn (string $column): string => 'CAST(' . $this->quoteIdentifier($column) . ' AS TEXT) LIKE :__search',
+            $columns
+        );
+
+        return [' WHERE ' . implode(' OR ', $conditions), ['__search' => '%' . $search . '%']];
     }
 
     public function insertRow(string $table, array $data): void
