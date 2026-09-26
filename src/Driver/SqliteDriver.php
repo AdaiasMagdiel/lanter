@@ -12,6 +12,16 @@ class Lanter_SqliteDriver implements Lanter_DriverInterface
         $this->pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
     }
 
+    public function supportsDatabases(): bool
+    {
+        return false;
+    }
+
+    public function listDatabases(): array
+    {
+        return [];
+    }
+
     public function listTables(): array
     {
         $stmt = $this->pdo->query(
@@ -19,6 +29,24 @@ class Lanter_SqliteDriver implements Lanter_DriverInterface
         );
 
         return array_column($stmt->fetchAll(), 'name');
+    }
+
+    public function listViews(): array
+    {
+        $stmt = $this->pdo->query("SELECT name FROM sqlite_master WHERE type = 'view' ORDER BY name");
+
+        return array_column($stmt->fetchAll(), 'name');
+    }
+
+    public function createView(string $name, string $query): void
+    {
+        $query = rtrim(trim($query), ';');
+
+        if (str_contains($query, ';')) {
+            throw new InvalidArgumentException('The view query must be a single SELECT statement.');
+        }
+
+        $this->pdo->exec(sprintf('CREATE VIEW %s AS %s', $this->quoteIdentifier($name), $query));
     }
 
     public function describeTable(string $table): array
@@ -34,20 +62,31 @@ class Lanter_SqliteDriver implements Lanter_DriverInterface
                 'nullable' => $row['notnull'] === 0,
                 'default' => $row['dflt_value'],
                 'key' => $row['pk'] > 0 ? 'PRI' : '',
+                'autoIncrement' => $row['pk'] > 0 && strtolower(trim($row['type'])) === 'integer',
             ];
         }
 
         return $columns;
     }
 
-    public function fetchRows(string $table, int $limit, int $offset, ?string $search = null): array
-    {
+    public function fetchRows(
+        string $table,
+        int $limit,
+        int $offset,
+        ?string $search = null,
+        ?string $sortColumn = null,
+        string $sortDirection = 'asc'
+    ): array {
         [$where, $params] = $this->buildSearchClause($table, $search);
+        $orderBy = $sortColumn !== null
+            ? ' ORDER BY ' . $this->quoteIdentifier($sortColumn) . ($sortDirection === 'desc' ? ' DESC' : ' ASC')
+            : '';
 
         $sql = sprintf(
-            'SELECT * FROM %s%s LIMIT %d OFFSET %d',
+            'SELECT * FROM %s%s%s LIMIT %d OFFSET %d',
             $this->quoteIdentifier($table),
             $where,
+            $orderBy,
             $limit,
             $offset
         );
@@ -151,6 +190,40 @@ class Lanter_SqliteDriver implements Lanter_DriverInterface
         $stmt->execute(['__pk' => $primaryValue]);
     }
 
+    /** @param array<int, array{name: string, type: string, nullable: bool, primaryKey: bool, autoIncrement: bool}> $columns */
+    public function createTable(string $table, array $columns): void
+    {
+        $primaryKeys = array_values(array_filter($columns, static fn (array $c): bool => $c['primaryKey']));
+        $singleAutoIncrementPk = count($primaryKeys) === 1
+            && $primaryKeys[0]['autoIncrement']
+            && strtolower(trim($primaryKeys[0]['type'])) === 'integer';
+
+        $defs = [];
+        $tablePkNames = [];
+
+        foreach ($columns as $column) {
+            $def = $this->quoteIdentifier($column['name']) . ' ' . $column['type'];
+
+            if ($singleAutoIncrementPk && $column['primaryKey']) {
+                $def .= ' PRIMARY KEY AUTOINCREMENT';
+            } elseif (!$column['nullable']) {
+                $def .= ' NOT NULL';
+            }
+
+            $defs[] = $def;
+
+            if (!$singleAutoIncrementPk && $column['primaryKey']) {
+                $tablePkNames[] = $this->quoteIdentifier($column['name']);
+            }
+        }
+
+        if ($tablePkNames !== []) {
+            $defs[] = 'PRIMARY KEY (' . implode(', ', $tablePkNames) . ')';
+        }
+
+        $this->pdo->exec(sprintf('CREATE TABLE %s (%s)', $this->quoteIdentifier($table), implode(', ', $defs)));
+    }
+
     public function runQuery(string $sql): array
     {
         $stmt = $this->pdo->query($sql);
@@ -169,8 +242,23 @@ class Lanter_SqliteDriver implements Lanter_DriverInterface
         return ['columns' => $columns, 'rows' => $rows, 'affected' => count($rows)];
     }
 
-    private function quoteIdentifier(string $identifier): string
+    public function quoteIdentifier(string $identifier): string
     {
         return '"' . str_replace('"', '""', $identifier) . '"';
+    }
+
+    public function quoteValue(mixed $value): string
+    {
+        return $value === null ? 'NULL' : $this->pdo->quote((string) $value);
+    }
+
+    public function getCreateStatement(string $name, bool $isView): string
+    {
+        $type = $isView ? 'view' : 'table';
+        $stmt = $this->pdo->prepare("SELECT sql FROM sqlite_master WHERE type = :type AND name = :name");
+        $stmt->execute(['type' => $type, 'name' => $name]);
+        $row = $stmt->fetch();
+
+        return $row['sql'] ?? '';
     }
 }

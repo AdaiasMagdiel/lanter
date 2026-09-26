@@ -11,18 +11,52 @@ class Lanter_MysqlDriver implements Lanter_DriverInterface
         $port = $connection['port'] ?? 3306;
         $this->database = $connection['database'] ?? '';
 
-        $dsn = sprintf('mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4', $host, $port, $this->database);
+        $dsn = sprintf('mysql:host=%s;port=%d;charset=utf8mb4', $host, $port);
+
+        if ($this->database !== '') {
+            $dsn .= ';dbname=' . $this->database;
+        }
 
         $this->pdo = new PDO($dsn, $connection['user'] ?? '', $connection['password'] ?? '');
         $this->pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
         $this->pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
     }
 
-    public function listTables(): array
+    public function supportsDatabases(): bool
     {
-        $stmt = $this->pdo->query('SHOW TABLES');
+        return true;
+    }
+
+    public function listDatabases(): array
+    {
+        $stmt = $this->pdo->query('SHOW DATABASES');
 
         return array_column($stmt->fetchAll(PDO::FETCH_NUM), 0);
+    }
+
+    public function listTables(): array
+    {
+        $stmt = $this->pdo->query("SHOW FULL TABLES WHERE Table_type = 'BASE TABLE'");
+
+        return array_column($stmt->fetchAll(PDO::FETCH_NUM), 0);
+    }
+
+    public function listViews(): array
+    {
+        $stmt = $this->pdo->query("SHOW FULL TABLES WHERE Table_type = 'VIEW'");
+
+        return array_column($stmt->fetchAll(PDO::FETCH_NUM), 0);
+    }
+
+    public function createView(string $name, string $query): void
+    {
+        $query = rtrim(trim($query), ';');
+
+        if (str_contains($query, ';')) {
+            throw new InvalidArgumentException('The view query must be a single SELECT statement.');
+        }
+
+        $this->pdo->exec(sprintf('CREATE VIEW %s AS %s', $this->quoteIdentifier($name), $query));
     }
 
     public function describeTable(string $table): array
@@ -38,20 +72,31 @@ class Lanter_MysqlDriver implements Lanter_DriverInterface
                 'nullable' => $row['Null'] === 'YES',
                 'default' => $row['Default'],
                 'key' => $row['Key'],
+                'autoIncrement' => stripos($row['Extra'] ?? '', 'auto_increment') !== false,
             ];
         }
 
         return $columns;
     }
 
-    public function fetchRows(string $table, int $limit, int $offset, ?string $search = null): array
-    {
+    public function fetchRows(
+        string $table,
+        int $limit,
+        int $offset,
+        ?string $search = null,
+        ?string $sortColumn = null,
+        string $sortDirection = 'asc'
+    ): array {
         [$where, $params] = $this->buildSearchClause($table, $search);
+        $orderBy = $sortColumn !== null
+            ? ' ORDER BY ' . $this->quoteIdentifier($sortColumn) . ($sortDirection === 'desc' ? ' DESC' : ' ASC')
+            : '';
 
         $sql = sprintf(
-            'SELECT * FROM %s%s LIMIT %d OFFSET %d',
+            'SELECT * FROM %s%s%s LIMIT %d OFFSET %d',
             $this->quoteIdentifier($table),
             $where,
+            $orderBy,
             $limit,
             $offset
         );
@@ -155,6 +200,37 @@ class Lanter_MysqlDriver implements Lanter_DriverInterface
         $stmt->execute(['__pk' => $primaryValue]);
     }
 
+    /** @param array<int, array{name: string, type: string, nullable: bool, primaryKey: bool, autoIncrement: bool}> $columns */
+    public function createTable(string $table, array $columns): void
+    {
+        $defs = [];
+        $primaryKeys = [];
+
+        foreach ($columns as $column) {
+            $def = $this->quoteIdentifier($column['name']) . ' ' . $column['type'];
+
+            if (!$column['nullable']) {
+                $def .= ' NOT NULL';
+            }
+
+            if ($column['autoIncrement']) {
+                $def .= ' AUTO_INCREMENT';
+            }
+
+            $defs[] = $def;
+
+            if ($column['primaryKey']) {
+                $primaryKeys[] = $this->quoteIdentifier($column['name']);
+            }
+        }
+
+        if ($primaryKeys !== []) {
+            $defs[] = 'PRIMARY KEY (' . implode(', ', $primaryKeys) . ')';
+        }
+
+        $this->pdo->exec(sprintf('CREATE TABLE %s (%s)', $this->quoteIdentifier($table), implode(', ', $defs)));
+    }
+
     public function runQuery(string $sql): array
     {
         $stmt = $this->pdo->query($sql);
@@ -173,8 +249,21 @@ class Lanter_MysqlDriver implements Lanter_DriverInterface
         return ['columns' => $columns, 'rows' => $rows, 'affected' => count($rows)];
     }
 
-    private function quoteIdentifier(string $identifier): string
+    public function quoteIdentifier(string $identifier): string
     {
         return '`' . str_replace('`', '``', $identifier) . '`';
+    }
+
+    public function quoteValue(mixed $value): string
+    {
+        return $value === null ? 'NULL' : $this->pdo->quote((string) $value);
+    }
+
+    public function getCreateStatement(string $name, bool $isView): string
+    {
+        $stmt = $this->pdo->query('SHOW CREATE ' . ($isView ? 'VIEW ' : 'TABLE ') . $this->quoteIdentifier($name));
+        $row = $stmt->fetch(PDO::FETCH_NUM);
+
+        return $row[1] ?? '';
     }
 }
