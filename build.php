@@ -18,6 +18,7 @@ $sourceFiles = [
     'src/Actions/table_structure.php',
     'src/Actions/row_form.php',
     'src/Actions/row_delete.php',
+    'src/Actions/sql.php',
     'src/bootstrap.php',
 ];
 

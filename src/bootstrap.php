@@ -51,6 +51,7 @@ function lanter_run(): void
         'row_new' => 'lanter_action_row_new',
         'row_edit' => 'lanter_action_row_edit',
         'row_delete' => 'lanter_action_row_delete',
+        'sql' => 'lanter_action_sql',
     ];
 
     $handler = $actions[$action] ?? 'lanter_action_dashboard';
