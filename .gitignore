@@ -1,0 +1,8 @@
+/vendor/
+/lanter_data.sqlite
+/dist/lanter_data.sqlite
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
