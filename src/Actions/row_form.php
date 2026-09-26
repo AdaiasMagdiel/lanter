@@ -4,6 +4,7 @@ function lanter_action_row_new(Lanter_Config $config, Lanter_Auth $auth, ?array 
 {
     $driver = lanter_make_driver($connection);
     $tables = $driver->listTables();
+    $views = $driver->listViews();
     $table = $_GET['table'] ?? '';
 
     if (!in_array($table, $tables, true)) {
@@ -25,7 +26,7 @@ function lanter_action_row_new(Lanter_Config $config, Lanter_Auth $auth, ?array 
 
             return;
         } catch (Throwable $e) {
-            $error = 'Não foi possível inserir: ' . $e->getMessage();
+            $error = 'Could not insert: ' . $e->getMessage();
         }
     }
 
@@ -34,17 +35,18 @@ function lanter_action_row_new(Lanter_Config $config, Lanter_Auth $auth, ?array 
         $columns,
         $values,
         '?action=row_new&table=' . urlencode($table),
-        'Novo registro',
+        'New row',
         $error
     );
 
-    lanter_render_layout('Novo registro: ' . $table, $content, $tables, $table);
+    lanter_render_layout('New row: ' . $table, $content, $tables, $table, lanter_table_counts($driver, $tables), $views);
 }
 
 function lanter_action_row_edit(Lanter_Config $config, Lanter_Auth $auth, ?array $connection): void
 {
     $driver = lanter_make_driver($connection);
     $tables = $driver->listTables();
+    $views = $driver->listViews();
     $table = $_GET['table'] ?? '';
     $pkValue = $_GET['pk'] ?? null;
 
@@ -74,7 +76,7 @@ function lanter_action_row_edit(Lanter_Config $config, Lanter_Auth $auth, ?array
 
             return;
         } catch (Throwable $e) {
-            $error = 'Não foi possível atualizar: ' . $e->getMessage();
+            $error = 'Could not update: ' . $e->getMessage();
         }
     }
 
@@ -91,12 +93,12 @@ function lanter_action_row_edit(Lanter_Config $config, Lanter_Auth $auth, ?array
         $columns,
         $row,
         '?action=row_edit&table=' . urlencode($table) . '&pk=' . urlencode((string) $pkValue),
-        'Editar registro',
+        'Edit row',
         $error,
         (string) $pkValue
     );
 
-    lanter_render_layout('Editar: ' . $table, $content, $tables, $table);
+    lanter_render_layout('Edit: ' . $table, $content, $tables, $table, lanter_table_counts($driver, $tables), $views);
 }
 
 /** @param array<int, array{name: string, type: string, nullable: bool, default: ?string, key: string}> $columns */
@@ -154,12 +156,21 @@ function lanter_render_row_form(
     ?string $error,
     ?string $originalPk = null
 ): string {
+    $isInsert = $originalPk === null;
     $fields = '';
 
     foreach ($columns as $column) {
         $name = $column['name'];
-        $hint = $column['type'] . ($column['nullable'] ? ', permite nulo' : '');
-        $input = lanter_render_field_input($column, $values[$name] ?? null);
+        $isAutoIncrementPk = $column['key'] === 'PRI' && ($column['autoIncrement'] ?? false);
+        $hintParts = array_filter([
+            $column['type'],
+            $column['nullable'] ? 'nullable' : null,
+            $isAutoIncrementPk ? 'auto-increment' : null,
+        ]);
+        $hint = implode(', ', $hintParts);
+        $input = $isInsert && $isAutoIncrementPk
+            ? '<input type="text" value="" placeholder="Auto-generated on insert" disabled>'
+            : lanter_render_field_input($column, $values[$name] ?? null);
 
         $fields .= <<<HTML
             <div class="lanter-field">
@@ -174,10 +185,12 @@ function lanter_render_row_form(
         : '';
 
     $errorHtml = $error !== null
-        ? '<p style="color:var(--danger)">' . htmlspecialchars($error) . '</p>'
+        ? '<p class="lanter-form-error">' . htmlspecialchars($error) . '</p>'
         : '';
 
     $backLink = '?action=dashboard&table=' . urlencode($table);
+    $saveIcon = lanter_icon('check');
+    $cancelIcon = lanter_icon('close');
 
     return <<<HTML
         <div class="lanter-panel lanter-form-panel">
@@ -187,8 +200,8 @@ function lanter_render_row_form(
                 {$hiddenPk}
                 {$fields}
                 <div class="lanter-form-actions">
-                    <button class="lanter-btn" type="submit">Salvar</button>
-                    <a class="lanter-btn lanter-btn-ghost" href="{$backLink}">Cancelar</a>
+                    <button class="lanter-btn" type="submit">{$saveIcon}<span>Save</span></button>
+                    <a class="lanter-btn lanter-btn-ghost" href="{$backLink}">{$cancelIcon}<span>Cancel</span></a>
                 </div>
             </form>
         </div>
