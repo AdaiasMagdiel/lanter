@@ -25,46 +25,71 @@ function lanter_action_login(Lanter_Config $config, Lanter_Auth $auth, ?array $c
 
             return;
         } catch (Throwable $e) {
-            $error = 'Não foi possível conectar: ' . $e->getMessage();
+            $error = 'Could not connect: ' . $e->getMessage();
         }
     }
 
-    $errorHtml = $error !== null ? '<p style="color:#f43f5e">' . htmlspecialchars($error) . '</p>' : '';
+    $errorHtml = $error !== null ? '<p class="lanter-form-error">' . htmlspecialchars($error) . '</p>' : '';
+    $plugIcon = lanter_icon('check');
 
-    lanter_render_bare('Entrar', <<<HTML
-        <form class="lanter-login" method="post" action="?action=login">
-            <h1>Lanter</h1>
-            {$errorHtml}
-            <div class="lanter-field">
-                <label>Driver</label>
-                <select name="driver">
-                    <option value="sqlite">SQLite</option>
-                    <option value="mysql">MySQL / MariaDB</option>
-                </select>
-            </div>
-            <div class="lanter-field">
-                <label>Caminho do arquivo (SQLite) ou host (MySQL)</label>
-                <input type="text" name="path" placeholder="/caminho/para/banco.sqlite">
-                <input type="text" name="host" placeholder="127.0.0.1">
-            </div>
-            <div class="lanter-field">
-                <label>Porta</label>
-                <input type="text" name="port" placeholder="3306">
-            </div>
-            <div class="lanter-field">
-                <label>Banco</label>
-                <input type="text" name="database">
-            </div>
-            <div class="lanter-field">
-                <label>Usuário</label>
-                <input type="text" name="user">
-            </div>
-            <div class="lanter-field">
-                <label>Senha</label>
-                <input type="password" name="password">
-            </div>
-            <button class="lanter-btn" type="submit">Conectar</button>
-        </form>
+    lanter_render_bare('Sign in', <<<HTML
+        <div class="lanter-login-page">
+            <form class="lanter-login" method="post" action="?action=login">
+                <div class="lanter-login-brand">
+                    <span class="lanter-brand-icon">&#128161;</span>
+                    <h1>Lanter</h1>
+                </div>
+                {$errorHtml}
+                <div class="lanter-field">
+                    <label>Driver</label>
+                    <select name="driver" id="lanter-login-driver">
+                        <option value="sqlite">SQLite</option>
+                        <option value="mysql">MySQL / MariaDB</option>
+                    </select>
+                </div>
+                <div class="lanter-field" data-driver-field="sqlite">
+                    <label>File path (SQLite)</label>
+                    <input type="text" name="path" placeholder="/path/to/database.sqlite">
+                </div>
+                <div class="lanter-field" data-driver-field="mysql">
+                    <label>Host (MySQL)</label>
+                    <input type="text" name="host" placeholder="127.0.0.1">
+                </div>
+                <div class="lanter-field" data-driver-field="mysql">
+                    <label>Port</label>
+                    <input type="text" name="port" placeholder="3306">
+                </div>
+                <div class="lanter-field" data-driver-field="mysql">
+                    <label>Database</label>
+                    <input type="text" name="database">
+                </div>
+                <div class="lanter-field" data-driver-field="mysql">
+                    <label>User</label>
+                    <input type="text" name="user">
+                </div>
+                <div class="lanter-field" data-driver-field="mysql">
+                    <label>Password</label>
+                    <input type="password" name="password">
+                </div>
+                <button class="lanter-btn" type="submit">{$plugIcon} Connect</button>
+            </form>
+        </div>
+        <script>
+            (function () {
+                var select = document.getElementById('lanter-login-driver');
+                var fields = document.querySelectorAll('[data-driver-field]');
+
+                function sync() {
+                    var driver = select.value;
+                    fields.forEach(function (field) {
+                        field.style.display = field.getAttribute('data-driver-field') === driver ? '' : 'none';
+                    });
+                }
+
+                select.addEventListener('change', sync);
+                sync();
+            })();
+        </script>
         HTML
     );
 }
