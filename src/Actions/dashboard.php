@@ -12,20 +12,32 @@ function lanter_action_dashboard(Lanter_Config $config, Lanter_Auth $auth, ?arra
         return;
     }
 
+    $search = trim((string) ($_GET['q'] ?? ''));
     $page = max(1, (int) ($_GET['page'] ?? 1));
     $perPage = 25;
-    $rows = $driver->fetchRows($activeTable, $perPage, ($page - 1) * $perPage);
-    $total = $driver->countRows($activeTable);
+    $rows = $driver->fetchRows($activeTable, $perPage, ($page - 1) * $perPage, $search !== '' ? $search : null);
+    $total = $driver->countRows($activeTable, $search !== '' ? $search : null);
 
-    $content = lanter_render_data_table($activeTable, $rows, $total, $page, $perPage);
+    $content = lanter_render_data_table($activeTable, $rows, $total, $page, $perPage, $search);
 
     lanter_render_layout('Dados: ' . $activeTable, $content, $tables, $activeTable);
 }
 
-function lanter_render_data_table(string $table, array $rows, int $total, int $page, int $perPage): string
+function lanter_render_data_table(string $table, array $rows, int $total, int $page, int $perPage, string $search): string
 {
+    $searchBar = '<form class="lanter-toolbar" method="get">'
+        . '<input type="hidden" name="action" value="dashboard">'
+        . '<input type="hidden" name="table" value="' . htmlspecialchars($table) . '">'
+        . '<input class="lanter-search" type="text" name="q" placeholder="Buscar em ' . htmlspecialchars($table) . '..." value="' . htmlspecialchars($search) . '">'
+        . '<button class="lanter-btn" type="submit">Buscar</button>'
+        . '</form>';
+
     if ($rows === []) {
-        return '<div class="lanter-empty">A tabela "' . htmlspecialchars($table) . '" está vazia.</div>';
+        $message = $search !== ''
+            ? 'Nenhum registro encontrado para "' . htmlspecialchars($search) . '".'
+            : 'A tabela "' . htmlspecialchars($table) . '" está vazia.';
+
+        return $searchBar . '<div class="lanter-empty">' . $message . '</div>';
     }
 
     $columns = array_keys($rows[0]);
@@ -43,17 +55,45 @@ function lanter_render_data_table(string $table, array $rows, int $total, int $p
         )) . '</tr>';
     }
 
-    $lastPage = (int) ceil($total / $perPage);
+    $lastPage = max(1, (int) ceil($total / $perPage));
+    $pagination = lanter_render_pagination($table, $search, $page, $lastPage, $total);
 
     return <<<HTML
+        {$searchBar}
         <div class="lanter-panel">
             <table class="lanter-table">
                 <thead>{$head}</thead>
                 <tbody>{$body}</tbody>
             </table>
         </div>
-        <p style="color:var(--text-muted);font-size:12px;margin-top:8px">
-            Página {$page} de {$lastPage} · {$total} registros
-        </p>
+        {$pagination}
+        HTML;
+}
+
+function lanter_render_pagination(string $table, string $search, int $page, int $lastPage, int $total): string
+{
+    $link = static function (int $targetPage) use ($table, $search): string {
+        $query = ['action' => 'dashboard', 'table' => $table, 'page' => $targetPage];
+
+        if ($search !== '') {
+            $query['q'] = $search;
+        }
+
+        return '?' . http_build_query($query);
+    };
+
+    $prev = $page > 1
+        ? '<a class="lanter-page-link" href="' . htmlspecialchars($link($page - 1)) . '">&larr; Anterior</a>'
+        : '<span class="lanter-page-link disabled">&larr; Anterior</span>';
+
+    $next = $page < $lastPage
+        ? '<a class="lanter-page-link" href="' . htmlspecialchars($link($page + 1)) . '">Próxima &rarr;</a>'
+        : '<span class="lanter-page-link disabled">Próxima &rarr;</span>';
+
+    return <<<HTML
+        <div class="lanter-pagination">
+            <span class="lanter-pagination-info">Página {$page} de {$lastPage} · {$total} registros</span>
+            <div class="lanter-pagination-nav">{$prev}{$next}</div>
+        </div>
         HTML;
 }
