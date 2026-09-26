@@ -4,9 +4,10 @@ function lanter_action_table_structure(Lanter_Config $config, Lanter_Auth $auth,
 {
     $driver = lanter_make_driver($connection);
     $tables = $driver->listTables();
+    $views = $driver->listViews();
     $activeTable = $_GET['table'] ?? null;
 
-    if ($activeTable === null || !in_array($activeTable, $tables, true)) {
+    if ($activeTable === null || (!in_array($activeTable, $tables, true) && !in_array($activeTable, $views, true))) {
         lanter_redirect('dashboard');
 
         return;
@@ -14,10 +15,17 @@ function lanter_action_table_structure(Lanter_Config $config, Lanter_Auth $auth,
 
     $columns = $driver->describeTable($activeTable);
 
+    $keyLabels = ['PRI' => 'PK', 'UNI' => 'UNIQUE', 'MUL' => 'INDEX'];
+
     $rows = '';
     foreach ($columns as $column) {
-        $keyBadge = $column['key'] !== '' ? '<span class="lanter-key">' . htmlspecialchars($column['key']) . '</span>' : '';
-        $nullable = $column['nullable'] ? 'SIM' : 'NÃO';
+        $keyLabel = $keyLabels[$column['key']] ?? $column['key'];
+        $keyBadge = $column['key'] !== ''
+            ? '<span class="lanter-key">' . lanter_icon('key') . htmlspecialchars($keyLabel) . '</span>'
+            : '';
+        $nullable = $column['nullable']
+            ? '<span class="lanter-badge lanter-badge-yes">YES</span>'
+            : '<span class="lanter-badge">NO</span>';
         $default = $column['default'] ?? '';
 
         $rows .= '<tr>'
@@ -32,11 +40,11 @@ function lanter_action_table_structure(Lanter_Config $config, Lanter_Auth $auth,
     $content = <<<HTML
         <div class="lanter-panel">
             <table class="lanter-table">
-                <thead><tr><th>Coluna</th><th>Tipo</th><th>Permite Nulo</th><th>Padrão</th><th>Chave</th></tr></thead>
+                <thead><tr><th>Column</th><th>Type</th><th>Nullable</th><th>Default</th><th>Key</th></tr></thead>
                 <tbody>{$rows}</tbody>
             </table>
         </div>
         HTML;
 
-    lanter_render_layout('Estrutura: ' . $activeTable, $content, $tables, $activeTable);
+    lanter_render_layout('Structure: ' . $activeTable, $content, $tables, $activeTable, lanter_table_counts($driver, $tables), $views);
 }
