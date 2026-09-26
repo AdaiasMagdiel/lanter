@@ -10,6 +10,7 @@ $sourceFiles = [
     'src/Driver/MysqlDriver.php',
     'src/Config.php',
     'src/Auth.php',
+    'src/Types.php',
     'src/View/layout.php',
     'src/Actions/login.php',
     'src/Actions/logout.php',
