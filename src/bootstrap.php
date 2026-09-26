@@ -12,11 +12,23 @@ function lanter_make_driver(array $connection): Lanter_DriverInterface
     return $driver;
 }
 
-function lanter_redirect(string $action): void
+function lanter_redirect(string $action, array $params = []): void
 {
-    $query = $action === '' ? '' : '?action=' . $action;
-    header('Location: ' . strtok($_SERVER['REQUEST_URI'], '?') . $query);
+    $query = http_build_query(['action' => $action, ...$params]);
+    header('Location: ' . strtok($_SERVER['REQUEST_URI'], '?') . '?' . $query);
     exit;
+}
+
+/** @param array<int, array{name: string, type: string, nullable: bool, default: ?string, key: string}> $columns */
+function lanter_primary_key(array $columns): ?string
+{
+    foreach ($columns as $column) {
+        if ($column['key'] === 'PRI') {
+            return $column['name'];
+        }
+    }
+
+    return null;
 }
 
 function lanter_run(): void
@@ -36,6 +48,9 @@ function lanter_run(): void
         'logout' => 'lanter_action_logout',
         'dashboard' => 'lanter_action_dashboard',
         'table_structure' => 'lanter_action_table_structure',
+        'row_new' => 'lanter_action_row_new',
+        'row_edit' => 'lanter_action_row_edit',
+        'row_delete' => 'lanter_action_row_delete',
     ];
 
     $handler = $actions[$action] ?? 'lanter_action_dashboard';

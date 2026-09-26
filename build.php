@@ -15,6 +15,8 @@ $sourceFiles = [
     'src/Actions/logout.php',
     'src/Actions/dashboard.php',
     'src/Actions/table_structure.php',
+    'src/Actions/row_form.php',
+    'src/Actions/row_delete.php',
     'src/bootstrap.php',
 ];
 
