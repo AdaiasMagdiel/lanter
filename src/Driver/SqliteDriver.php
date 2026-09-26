@@ -89,6 +89,22 @@ class Lanter_SqliteDriver implements Lanter_DriverInterface
         return [' WHERE ' . implode(' OR ', $conditions), ['__search' => '%' . $search . '%']];
     }
 
+    public function findRow(string $table, string $primaryKey, mixed $primaryValue): ?array
+    {
+        $sql = sprintf(
+            'SELECT * FROM %s WHERE %s = :__pk LIMIT 1',
+            $this->quoteIdentifier($table),
+            $this->quoteIdentifier($primaryKey)
+        );
+
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute(['__pk' => $primaryValue]);
+
+        $row = $stmt->fetch();
+
+        return $row === false ? null : $row;
+    }
+
     public function insertRow(string $table, array $data): void
     {
         $columns = array_keys($data);

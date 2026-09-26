@@ -15,6 +15,9 @@ interface Lanter_DriverInterface
 
     public function countRows(string $table, ?string $search = null): int;
 
+    /** @return array<string, mixed>|null */
+    public function findRow(string $table, string $primaryKey, mixed $primaryValue): ?array;
+
     public function insertRow(string $table, array $data): void;
 
     public function updateRow(string $table, string $primaryKey, mixed $primaryValue, array $data): void;
