@@ -210,6 +210,71 @@ redirects. Embedding it means serving it from a route that:
 Lanter builds all its links relative to the current URL (`?action=...`), so
 it works at any path, e.g. `/admin/db`. Match `GET` and `POST` on that route.
 
+### Erlenmeyer
+
+[Erlenmeyer](https://github.com/AdaiasMagdiel/Erlenmeyer) is the framework
+Lanter was built alongside, so the fit is direct. Erlenmeyer starts the
+native PHP session when the `App` is created, which means Lanter and your
+app share the same `$_SESSION`, and a route middleware is the natural place
+for the access check.
+
+```php
+<?php
+
+use AdaiasMagdiel\Erlenmeyer\App;
+use AdaiasMagdiel\Erlenmeyer\Request;
+use AdaiasMagdiel\Erlenmeyer\Response;
+use AdaiasMagdiel\Erlenmeyer\Session;
+
+require __DIR__ . '/vendor/autoload.php';
+
+$app = new App();
+
+$requireAdmin = function (Request $req, Response $res, callable $next, $params) {
+    if (Session::get('role') !== 'admin') {
+        $res->setStatusCode(403)->withHtml('Forbidden')->send();
+
+        return;
+    }
+
+    $next($req, $res, $params);
+};
+
+$app->match(['GET', 'POST'], '/admin/db', function (Request $req, Response $res, $params) {
+    define('LANTER_CONFIG', [
+        'auth' => [
+            'mode' => 'delegate',
+            'delegate' => static fn (): array => [
+                'driver' => 'sqlite',
+                'path' => __DIR__ . '/storage/app.sqlite',
+            ],
+        ],
+    ]);
+
+    ob_start();
+    require __DIR__ . '/tools/lanter.php';
+
+    $res->withHtml(ob_get_clean())->send();
+}, [$requireAdmin]);
+
+$app->run();
+```
+
+Notes:
+
+- The middleware is the real gate. Because it runs before the handler, the
+  delegate never sees an unauthenticated user and can simply return the
+  connection.
+- The delegate can read Erlenmeyer's `Session` too, for example to pick a
+  per-user database.
+- Erlenmeyer's `Response::send()` echoes the body, so capturing Lanter's
+  output with `ob_start()` and handing it to `withHtml()` keeps status code
+  and headers under Erlenmeyer's control.
+- Lanter's redirects call `header()` + `exit` directly, which ends the
+  request before `send()` runs. That is expected and harmless.
+- Erlenmeyer's `run()` turns PHP warnings into exceptions. If you ever see
+  an `ErrorException` pointing into `lanter.php`, please report it as a bug.
+
 ### Plain PHP (no framework)
 
 ```php
