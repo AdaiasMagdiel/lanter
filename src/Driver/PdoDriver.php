@@ -309,7 +309,10 @@ abstract class Lanter_PdoDriver implements Lanter_DriverInterface
 
     public function commit(): void
     {
-        $this->pdo->commit();
+        // MySQL auto-commits on DDL, which silently ends the transaction.
+        if ($this->pdo->inTransaction()) {
+            $this->pdo->commit();
+        }
     }
 
     public function rollBack(): void

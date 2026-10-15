@@ -124,6 +124,12 @@ function lanter_collect_update_data(array $columns, array $input): array
 
     foreach ($columns as $column) {
         $value = lanter_collect_column_value($column, $input);
+
+        // An empty primary key means "leave it alone", never "set it to empty".
+        if ($column['key'] === 'PRI' && $value === '') {
+            continue;
+        }
+
         $data[$column['name']] = $value === '' && $column['nullable'] ? null : $value;
     }
 
