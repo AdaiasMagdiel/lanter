@@ -18,12 +18,12 @@ function lanter_render_layout(
         $activeTable = $_SESSION['lanter_last_table'];
     }
 
-    $connection = $_SESSION['lanter_connection'] ?? null;
+    $connection = lanter_current_connection();
+    $readOnly = lanter_is_read_only($connection);
     $showDatabaseSwitch = $connection !== null
-        && in_array($connection['driver'] ?? '', ['mysql', 'mariadb'], true)
+        && lanter_driver_kind($connection) !== 'sqlite'
         && ($connection['database'] ?? '') !== '';
-    $driverLabels = ['sqlite' => 'SQLite', 'mysql' => 'MySQL', 'mariadb' => 'MariaDB'];
-    $driverLabel = $driverLabels[$connection['driver'] ?? ''] ?? null;
+    $driverLabel = $connection !== null ? lanter_driver_label($connection) : null;
     $statusLabel = $driverLabel !== null && ($connection['database'] ?? '') !== ''
         ? $driverLabel . ' · ' . $connection['database']
         : $driverLabel;
@@ -31,12 +31,17 @@ function lanter_render_layout(
     $activeRowCount = $activeTable !== null && isset($tableCounts[$activeTable])
         ? lanter_format_count($tableCounts[$activeTable]) . ' rows'
         : null;
+    $notice = $_GET['notice'] ?? null;
+    $error = $_GET['error'] ?? null;
+    $csrfToken = lanter_csrf_token();
     ?><!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title><?= htmlspecialchars($title) ?> · Lanter</title>
+<meta name="lanter-token" content="<?= htmlspecialchars($csrfToken) ?>">
+<script>try { var t = localStorage.getItem('lanter-theme'); if (t) { document.documentElement.setAttribute('data-theme', t); } } catch (e) {}</script>
 <style><?= lanter_css() ?></style>
 </head>
 <body>
@@ -47,20 +52,23 @@ function lanter_render_layout(
 <span class="lanter-brand-text">
 <span class="lanter-brand-name">Lanter</span>
 <?php if ($statusLabel !== null): ?>
-<span class="lanter-status-line"><span class="lanter-status-dot"></span><?= htmlspecialchars($statusLabel) ?></span>
+<span class="lanter-status-line"><span class="lanter-status-dot<?= $readOnly ? ' lanter-status-dot-amber' : '' ?>"></span><?= htmlspecialchars($statusLabel) ?><?php if ($readOnly): ?> <span class="lanter-badge lanter-badge-amber">read-only</span><?php endif; ?></span>
 <?php endif; ?>
 </span>
 </div>
 <div class="lanter-sidebar-body">
 <div class="lanter-sidebar-section-label">
 <span>Tables &amp; views (<?= count($allRelations) ?>)</span>
+<?php if (!$readOnly): ?>
 <span class="lanter-sidebar-section-actions">
 <a href="?action=table_create" title="New table"><?= lanter_icon('plus') ?></a>
 <a href="?action=view_create" title="New view"><?= lanter_icon('eye') ?></a>
+<a href="?action=table_import" title="Import CSV or SQL"><?= lanter_icon('upload') ?></a>
 </span>
+<?php endif; ?>
 </div>
 <?php if (count($allRelations) > 6): ?>
-<span class="lanter-search-wrap lanter-sidebar-filter-wrap"><?= lanter_icon('search') ?><input type="text" id="lanter-table-filter" class="lanter-search" placeholder="Filter tables..." autocomplete="off"></span>
+<span class="lanter-search-wrap lanter-sidebar-filter-wrap"><?= lanter_icon('search') ?><input type="text" id="lanter-table-filter" class="lanter-search" placeholder="Filter tables... ( / )" autocomplete="off"></span>
 <?php endif; ?>
 <nav class="lanter-table-list" id="lanter-table-list">
 <?php foreach ($tables as $table): ?>
@@ -88,7 +96,9 @@ function lanter_render_layout(
 <?php if ($showDatabaseSwitch): ?>
 <a class="lanter-sidebar-link" href="?action=change_database"><?= lanter_icon('swap') ?><span>Switch database</span></a>
 <?php endif; ?>
+<button type="button" class="lanter-sidebar-link lanter-theme-toggle" id="lanter-theme-toggle"><?= lanter_icon('sun', 'lanter-icon lanter-icon-sun') ?><?= lanter_icon('moon', 'lanter-icon lanter-icon-moon') ?><span>Toggle theme</span></button>
 <a class="lanter-sidebar-link lanter-sidebar-link-danger" href="?action=logout"><?= lanter_icon('logout') ?><span>Sign out</span></a>
+<span class="lanter-sidebar-version">v<?= htmlspecialchars(LANTER_VERSION) ?></span>
 </div>
 </div>
 </aside>
@@ -101,8 +111,22 @@ function lanter_render_layout(
 </div>
 <div class="lanter-table-header-actions">
 <a class="lanter-btn lanter-btn-ghost" href="<?= htmlspecialchars($_SERVER['REQUEST_URI']) ?>" title="Refresh"><?= lanter_icon('refresh') ?><span>Refresh</span></a>
-<a class="lanter-btn lanter-btn-ghost" href="?action=table_export&amp;table=<?= urlencode($activeTable) ?>" title="Export SQL"><?= lanter_icon('download') ?><span>Export SQL</span></a>
-<?php if (!$isActiveView): ?><a class="lanter-btn" href="?action=row_new&amp;table=<?= urlencode($activeTable) ?>"><?= lanter_icon('plus') ?><span>New Row</span></a><?php endif; ?>
+<details class="lanter-menu">
+<summary class="lanter-btn lanter-btn-ghost"><?= lanter_icon('download') ?><span>Export</span></summary>
+<div class="lanter-menu-items">
+<a href="?action=table_export&amp;table=<?= urlencode($activeTable) ?>">SQL (structure + data)</a>
+<a href="?action=table_export&amp;table=<?= urlencode($activeTable) ?>&amp;data=0">SQL (structure only)</a>
+<?php if (!$isActiveView): ?>
+<a href="?action=table_export&amp;table=<?= urlencode($activeTable) ?>&amp;structure=0">SQL (data only)</a>
+<?php endif; ?>
+<a href="?action=table_export&amp;table=<?= urlencode($activeTable) ?>&amp;format=csv">CSV</a>
+<a href="?action=table_export&amp;table=<?= urlencode($activeTable) ?>&amp;format=json">JSON</a>
+</div>
+</details>
+<?php if (!$isActiveView && !$readOnly): ?>
+<a class="lanter-btn lanter-btn-ghost" href="?action=table_import&amp;table=<?= urlencode($activeTable) ?>" title="Import CSV"><?= lanter_icon('upload') ?><span>Import</span></a>
+<a class="lanter-btn" href="?action=row_new&amp;table=<?= urlencode($activeTable) ?>"><?= lanter_icon('plus') ?><span>New Row</span></a>
+<?php endif; ?>
 </div>
 </div>
 <?php endif; ?>
@@ -114,6 +138,8 @@ function lanter_render_layout(
 <a class="lanter-tab-link<?= $currentAction === 'sql' ? ' active' : '' ?>" href="?action=sql"><?= lanter_icon('terminal') ?><span>SQL</span></a>
 </nav>
 <div class="lanter-main-content">
+<?php if ($notice !== null): ?><p class="lanter-form-notice"><?= htmlspecialchars($notice) ?></p><?php endif; ?>
+<?php if ($error !== null): ?><p class="lanter-form-error"><?= htmlspecialchars($error) ?></p><?php endif; ?>
 <?= $content ?>
 </div>
 </main>
@@ -145,6 +171,22 @@ function lanter_render_layout(
             document.body.style.overflow = '';
         }
 
+        function showPanel(panel) {
+            box.innerHTML = '';
+            box.appendChild(panel);
+            overlay.hidden = false;
+            document.body.style.overflow = 'hidden';
+
+            var cancel = panel.querySelector('.lanter-form-actions .lanter-btn-ghost');
+
+            if (cancel) {
+                cancel.addEventListener('click', function (event) {
+                    event.preventDefault();
+                    closeModal();
+                });
+            }
+        }
+
         function openModal(url) {
             fetch(url)
                 .then(function (response) { return response.text(); })
@@ -158,26 +200,50 @@ function lanter_render_layout(
                         return;
                     }
 
-                    box.innerHTML = '';
-                    box.appendChild(panel);
-                    overlay.hidden = false;
-                    document.body.style.overflow = 'hidden';
-
-                    var cancel = panel.querySelector('.lanter-form-actions .lanter-btn-ghost');
-
-                    if (cancel) {
-                        cancel.addEventListener('click', function (event) {
-                            event.preventDefault();
-                            closeModal();
-                        });
-                    }
+                    showPanel(panel);
                 })
                 .catch(function () {
                     window.location = url;
                 });
         }
 
+        function openValueModal(value) {
+            var panel = document.createElement('div');
+            panel.className = 'lanter-panel lanter-form-panel lanter-value-panel';
+            var pre = document.createElement('pre');
+            pre.className = 'lanter-value-pre';
+            var text = value;
+            try { text = JSON.stringify(JSON.parse(value), null, 2); } catch (e) {}
+            pre.textContent = text;
+            var actions = document.createElement('div');
+            actions.className = 'lanter-form-actions';
+            var copy = document.createElement('button');
+            copy.type = 'button';
+            copy.className = 'lanter-btn';
+            copy.textContent = 'Copy';
+            copy.addEventListener('click', function () {
+                navigator.clipboard.writeText(value).then(function () { copy.textContent = 'Copied'; });
+            });
+            var close = document.createElement('button');
+            close.type = 'button';
+            close.className = 'lanter-btn lanter-btn-ghost';
+            close.textContent = 'Close';
+            actions.appendChild(copy);
+            actions.appendChild(close);
+            panel.appendChild(pre);
+            panel.appendChild(actions);
+            showPanel(panel);
+        }
+
         document.addEventListener('click', function (event) {
+            var cell = event.target.closest('.lanter-cell-long');
+
+            if (cell) {
+                openValueModal(cell.getAttribute('data-full'));
+
+                return;
+            }
+
             var link = event.target.closest('a[href*="action=row_new"], a[href*="action=row_edit"], a[href*="action=table_create"], a[href*="action=view_create"]');
 
             if (link) {
@@ -245,6 +311,64 @@ function lanter_render_layout(
             }
         });
     })();
+
+    (function () {
+        document.addEventListener('submit', function (event) {
+            var form = event.target;
+            if (!form.hasAttribute('data-prompt')) { return; }
+            var answer = prompt(form.getAttribute('data-prompt'), form.getAttribute('data-prompt-default') || '');
+            if (answer === null || answer.trim() === '') {
+                event.preventDefault();
+                return;
+            }
+            form.elements[form.getAttribute('data-prompt-field')].value = answer.trim();
+        });
+
+        var toggle = document.getElementById('lanter-filter-toggle');
+        var filters = document.getElementById('lanter-filters');
+        if (toggle && filters) {
+            toggle.addEventListener('click', function () {
+                filters.hidden = !filters.hidden;
+                if (!filters.hidden) {
+                    var first = filters.querySelector('input');
+                    if (first) { first.focus(); }
+                }
+            });
+        }
+
+        document.addEventListener('click', function (event) {
+            document.querySelectorAll('details.lanter-menu[open]').forEach(function (menu) {
+                if (!menu.contains(event.target)) { menu.removeAttribute('open'); }
+            });
+        });
+    })();
+
+    (function () {
+        var toggle = document.getElementById('lanter-theme-toggle');
+        if (!toggle) { return; }
+        toggle.addEventListener('click', function () {
+            var root = document.documentElement;
+            var next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+            root.setAttribute('data-theme', next);
+            try { localStorage.setItem('lanter-theme', next); } catch (e) {}
+        });
+    })();
+
+    (function () {
+        document.addEventListener('keydown', function (event) {
+            var tag = (event.target.tagName || '').toLowerCase();
+            var typing = tag === 'input' || tag === 'textarea' || tag === 'select' || event.target.isContentEditable;
+
+            if (event.key === '/' && !typing && !event.ctrlKey && !event.metaKey) {
+                var target = document.getElementById('lanter-table-filter') || document.getElementById('lanter-grid-search');
+                if (target) {
+                    event.preventDefault();
+                    target.focus();
+                    target.select();
+                }
+            }
+        });
+    })();
 </script>
 </body>
 </html>
@@ -259,6 +383,7 @@ function lanter_render_bare(string $title, string $content): void
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title><?= htmlspecialchars($title) ?> · Lanter</title>
+<script>try { var t = localStorage.getItem('lanter-theme'); if (t) { document.documentElement.setAttribute('data-theme', t); } } catch (e) {}</script>
 <style><?= lanter_css() ?></style>
 </head>
 <body>
