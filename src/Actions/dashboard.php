@@ -10,8 +10,6 @@ function lanter_action_dashboard(Lanter_Config $config, Lanter_Auth $auth, ?arra
         if ($selected !== '') {
             $auth->login([...$connection, 'database' => $selected]);
             lanter_redirect('dashboard');
-
-            return;
         }
 
         lanter_render_layout('Databases', lanter_render_database_list($driver->listDatabases()), []);
@@ -26,33 +24,124 @@ function lanter_action_dashboard(Lanter_Config $config, Lanter_Auth $auth, ?arra
     $isView = $activeTable !== null && in_array($activeTable, $views, true);
 
     if ($activeTable === null || (!in_array($activeTable, $tables, true) && !$isView)) {
-        lanter_render_layout('Dashboard', '<div class="lanter-empty">Select a table from the sidebar.</div>', $tables, null, $tableCounts, $views);
+        lanter_render_layout('Dashboard', lanter_render_welcome($tables, $views), $tables, null, $tableCounts, $views);
 
         return;
     }
 
-    $search = trim((string) ($_GET['q'] ?? ''));
-    $page = max(1, (int) ($_GET['page'] ?? 1));
-    $perPage = 25;
     $columns = $driver->describeTable($activeTable);
     $columnNames = array_column($columns, 'name');
-    $sortColumn = $_GET['sort'] ?? null;
-    $sortColumn = $sortColumn !== null && in_array($sortColumn, $columnNames, true) ? $sortColumn : null;
-    $sortDirection = ($_GET['dir'] ?? 'asc') === 'desc' ? 'desc' : 'asc';
 
-    $rows = $driver->fetchRows($activeTable, $perPage, ($page - 1) * $perPage, $search !== '' ? $search : null, $sortColumn, $sortDirection);
-    $total = $search !== '' ? $driver->countRows($activeTable, $search) : ($tableCounts[$activeTable] ?? $driver->countRows($activeTable));
-    $primaryKey = lanter_primary_key($columns);
+    $state = lanter_grid_state($config, $activeTable, $columnNames);
+    $rows = $driver->fetchRows(
+        $activeTable,
+        $state['perPage'],
+        ($state['page'] - 1) * $state['perPage'],
+        $state['search'] !== '' ? $state['search'] : null,
+        $state['sort'],
+        $state['dir'],
+        $state['filters']
+    );
 
-    $content = lanter_render_data_table($activeTable, $rows, $total, $page, $perPage, $search, $primaryKey, $sortColumn, $sortDirection);
+    $isFiltered = $state['search'] !== '' || $state['filters'] !== [];
+    $total = $isFiltered
+        ? $driver->countRows($activeTable, $state['search'] !== '' ? $state['search'] : null, $state['filters'])
+        : ($tableCounts[$activeTable] ?? $driver->countRows($activeTable));
+
+    $foreignKeys = [];
+    foreach ($isView ? [] : $driver->listForeignKeys($activeTable) as $fk) {
+        $foreignKeys[$fk['column']] = $fk;
+    }
+
+    $content = lanter_render_data_table($state, $rows, $total, $columns, $foreignKeys, $isView);
 
     lanter_render_layout('Data: ' . $activeTable, $content, $tables, $activeTable, $tableCounts, $views);
+}
+
+/**
+ * Reads paging/sorting/filter state from the query string and session.
+ *
+ * @param string[] $columnNames
+ * @return array{table: string, search: string, page: int, perPage: int, sort: ?string, dir: string, filters: array<string, string>}
+ */
+function lanter_grid_state(Lanter_Config $config, string $table, array $columnNames): array
+{
+    $requestedPerPage = (int) ($_GET['per_page'] ?? 0);
+
+    if (in_array($requestedPerPage, Lanter_Config::PAGE_SIZES, true)) {
+        $_SESSION['lanter_per_page'] = $requestedPerPage;
+    }
+
+    $perPage = $_SESSION['lanter_per_page'] ?? $config->perPage();
+    $sort = $_GET['sort'] ?? null;
+
+    $filters = [];
+    foreach ((array) ($_GET['f'] ?? []) as $column => $value) {
+        if (is_string($value) && trim($value) !== '' && in_array($column, $columnNames, true)) {
+            $filters[$column] = trim($value);
+        }
+    }
+
+    return [
+        'table' => $table,
+        'search' => trim((string) ($_GET['q'] ?? '')),
+        'page' => max(1, (int) ($_GET['page'] ?? 1)),
+        'perPage' => $perPage,
+        'sort' => $sort !== null && in_array($sort, $columnNames, true) ? $sort : null,
+        'dir' => ($_GET['dir'] ?? 'asc') === 'desc' ? 'desc' : 'asc',
+        'filters' => $filters,
+    ];
+}
+
+/** Builds a dashboard URL for the current grid state, with overrides. */
+function lanter_grid_url(array $state, array $overrides = []): string
+{
+    $query = ['action' => 'dashboard', 'table' => $state['table']];
+
+    if ($state['search'] !== '') {
+        $query['q'] = $state['search'];
+    }
+
+    if ($state['sort'] !== null) {
+        $query['sort'] = $state['sort'];
+        $query['dir'] = $state['dir'];
+    }
+
+    if ($state['filters'] !== []) {
+        $query['f'] = $state['filters'];
+    }
+
+    if ($state['page'] > 1) {
+        $query['page'] = $state['page'];
+    }
+
+    foreach ($overrides as $key => $value) {
+        if ($value === null) {
+            unset($query[$key]);
+        } else {
+            $query[$key] = $value;
+        }
+    }
+
+    return '?' . http_build_query($query);
 }
 
 function lanter_action_change_database(Lanter_Config $config, Lanter_Auth $auth, ?array $connection): void
 {
     $auth->login([...$connection, 'database' => '']);
     lanter_redirect('dashboard');
+}
+
+function lanter_render_welcome(array $tables, array $views): string
+{
+    $count = count($tables) + count($views);
+    $readOnly = lanter_is_read_only();
+
+    $hint = $count === 0
+        ? ($readOnly ? 'This database has no tables yet.' : 'This database is empty. Create a table from the sidebar or run SQL.')
+        : 'Select a table from the sidebar, or press <kbd>/</kbd> to filter the list.';
+
+    return '<div class="lanter-empty">' . $hint . '</div>';
 }
 
 function lanter_render_database_list(array $databases): string
@@ -72,74 +161,50 @@ function lanter_render_database_list(array $databases): string
     return '<div class="lanter-panel lanter-database-list"><nav class="lanter-table-list">' . $items . '</nav></div>';
 }
 
-function lanter_render_data_table(
-    string $table,
-    array $rows,
-    int $total,
-    int $page,
-    int $perPage,
-    string $search,
-    ?string $primaryKey,
-    ?string $sortColumn = null,
-    string $sortDirection = 'asc'
-): string {
-    $sortHiddenFields = $sortColumn !== null
-        ? '<input type="hidden" name="sort" value="' . htmlspecialchars($sortColumn) . '">'
-            . '<input type="hidden" name="dir" value="' . htmlspecialchars($sortDirection) . '">'
-        : '';
+/**
+ * @param array<int, array{name: string, type: string, nullable: bool, default: ?string, key: string}> $columns
+ * @param array<string, array{name: string, column: string, refTable: string, refColumn: string}> $foreignKeys
+ */
+function lanter_render_data_table(array $state, array $rows, int $total, array $columns, array $foreignKeys, bool $isView): string
+{
+    $table = $state['table'];
+    $primaryKey = $isView ? null : lanter_primary_key($columns);
+    $canWrite = !lanter_is_read_only() && $primaryKey !== null;
+    $columnNames = array_column($columns, 'name');
 
-    $bulkActionsBar = $primaryKey !== null
-        ? '<div class="lanter-bulk-actions" id="lanter-bulk-actions" hidden>'
-            . '<button type="button" class="lanter-btn lanter-btn-danger" id="lanter-bulk-delete-btn">' . lanter_icon('trash')
-            . '<span>Delete selected (<span id="lanter-bulk-count">0</span>)</span></button>'
-            . '</div>'
-        : '';
-
-    $searchBar = '<form class="lanter-toolbar" method="get">'
-        . '<input type="hidden" name="action" value="dashboard">'
-        . '<input type="hidden" name="table" value="' . htmlspecialchars($table) . '">'
-        . $sortHiddenFields
-        . '<span class="lanter-search-wrap">' . lanter_icon('search') . '<input class="lanter-search" type="text" name="q" placeholder="Search in ' . htmlspecialchars($table) . '..." value="' . htmlspecialchars($search) . '"></span>'
-        . '<button class="lanter-btn lanter-btn-ghost" type="submit">Search</button>'
-        . $bulkActionsBar
-        . '</form>';
+    $toolbar = lanter_render_grid_toolbar($state, $columnNames, $canWrite);
 
     if ($rows === []) {
-        $message = $search !== ''
-            ? 'No rows found for "' . htmlspecialchars($search) . '".'
+        $message = $state['search'] !== '' || $state['filters'] !== []
+            ? 'No rows match the current search or filters.'
             : 'The table "' . htmlspecialchars($table) . '" is empty.';
 
-        return $searchBar . '<div class="lanter-empty">' . $message . '</div>';
+        return $toolbar . '<div class="lanter-empty">' . $message . '</div>';
     }
 
-    $columns = array_keys($rows[0]);
+    $displayColumns = array_keys($rows[0]);
     $keyIcon = lanter_icon('key', 'lanter-icon lanter-header-key');
+    $linkIcon = lanter_icon('link', 'lanter-icon lanter-header-key');
 
-    $headCells = implode('', array_map(
-        static function (string $c) use ($table, $search, $sortColumn, $sortDirection, $primaryKey, $keyIcon): string {
-            $isActive = $c === $sortColumn;
-            $nextDirection = $isActive && $sortDirection === 'asc' ? 'desc' : 'asc';
-            $query = ['action' => 'dashboard', 'table' => $table, 'sort' => $c, 'dir' => $nextDirection];
+    $headCells = '';
+    foreach ($displayColumns as $c) {
+        $isActive = $c === $state['sort'];
+        $nextDirection = $isActive && $state['dir'] === 'asc' ? 'desc' : 'asc';
+        $href = lanter_grid_url($state, ['sort' => $c, 'dir' => $nextDirection, 'page' => null]);
+        $arrow = $isActive ? ($state['dir'] === 'asc' ? '↑' : '↓') : '⇅';
+        $iconClass = $isActive ? 'lanter-sort-icon active' : 'lanter-sort-icon';
+        $badge = $c === $primaryKey ? $keyIcon : (isset($foreignKeys[$c]) ? $linkIcon : '');
+        $title = isset($foreignKeys[$c])
+            ? ' title="References ' . htmlspecialchars($foreignKeys[$c]['refTable'] . '.' . $foreignKeys[$c]['refColumn']) . '"'
+            : '';
 
-            if ($search !== '') {
-                $query['q'] = $search;
-            }
-
-            $arrow = $isActive
-                ? ($sortDirection === 'asc' ? '↑' : '↓')
-                : '⇅';
-            $iconClass = $isActive ? 'lanter-sort-icon active' : 'lanter-sort-icon';
-            $pkIcon = $c === $primaryKey ? $keyIcon : '';
-
-            return '<th class="lanter-sortable"><a href="?' . htmlspecialchars(http_build_query($query)) . '">'
-                . $pkIcon . htmlspecialchars($c) . '<span class="' . $iconClass . '">' . $arrow . '</span></a></th>';
-        },
-        $columns
-    ));
+        $headCells .= '<th class="lanter-sortable"' . $title . '><a href="' . htmlspecialchars($href) . '">'
+            . $badge . htmlspecialchars($c) . '<span class="' . $iconClass . '">' . $arrow . '</span></a></th>';
+    }
 
     $selectAllCell = '';
 
-    if ($primaryKey !== null) {
+    if ($canWrite) {
         $selectAllCell = '<th class="lanter-select-col"><input type="checkbox" id="lanter-select-all"></th>';
         $headCells .= '<th>Actions</th>';
     }
@@ -148,14 +213,15 @@ function lanter_render_data_table(
 
     $body = '';
     foreach ($rows as $row) {
-        $cells = implode('', array_map(
-            static fn ($value): string => '<td>' . htmlspecialchars((string) $value) . '</td>',
-            $row
-        ));
+        $cells = '';
+
+        foreach ($row as $column => $value) {
+            $cells .= lanter_render_cell($value, $foreignKeys[$column] ?? null);
+        }
 
         $selectCell = '';
 
-        if ($primaryKey !== null) {
+        if ($canWrite) {
             $pkValue = (string) $row[$primaryKey];
             $selectCell = '<td class="lanter-select-col"><input type="checkbox" class="lanter-row-select" value="' . htmlspecialchars($pkValue) . '"></td>';
             $cells .= lanter_render_row_actions($table, $pkValue);
@@ -164,13 +230,13 @@ function lanter_render_data_table(
         $body .= '<tr>' . $selectCell . $cells . '</tr>';
     }
 
-    $lastPage = max(1, (int) ceil($total / $perPage));
-    $pagination = lanter_render_pagination($table, $search, $page, $lastPage, $total, $sortColumn, $sortDirection);
-    $bulkDeleteScript = $primaryKey !== null ? lanter_render_bulk_delete_script($table) : '';
+    $lastPage = max(1, (int) ceil($total / $state['perPage']));
+    $pagination = lanter_render_pagination($state, $lastPage, $total);
+    $bulkDeleteScript = $canWrite ? lanter_render_bulk_delete_script($table) : '';
 
     return <<<HTML
-        {$searchBar}
-        <div class="lanter-panel">
+        {$toolbar}
+        <div class="lanter-panel lanter-grid-panel">
             <table class="lanter-table">
                 <thead>{$head}</thead>
                 <tbody>{$body}</tbody>
@@ -181,9 +247,96 @@ function lanter_render_data_table(
         HTML;
 }
 
+/** @param array{name: string, column: string, refTable: string, refColumn: string}|null $foreignKey */
+function lanter_render_cell(mixed $value, ?array $foreignKey): string
+{
+    if ($value === null) {
+        return '<td><span class="lanter-null">NULL</span></td>';
+    }
+
+    $text = (string) $value;
+
+    if ($foreignKey !== null && $text !== '') {
+        $href = '?' . http_build_query([
+            'action' => 'dashboard',
+            'table' => $foreignKey['refTable'],
+            'f' => [$foreignKey['refColumn'] => '=' . $text],
+        ]);
+
+        return '<td><a class="lanter-fk-link" href="' . htmlspecialchars($href) . '" title="Open in '
+            . htmlspecialchars($foreignKey['refTable']) . '">' . htmlspecialchars($text) . '</a></td>';
+    }
+
+    $isLong = strlen($text) > 120 || str_contains($text, "\n");
+
+    if ($isLong) {
+        $preview = mb_substr(str_replace(["\r", "\n"], ' ', $text), 0, 120) . '…';
+
+        return '<td><button type="button" class="lanter-cell-long" data-full="' . htmlspecialchars($text) . '">'
+            . htmlspecialchars($preview) . '</button></td>';
+    }
+
+    return '<td>' . htmlspecialchars($text) . '</td>';
+}
+
+/** @param string[] $columnNames */
+function lanter_render_grid_toolbar(array $state, array $columnNames, bool $canWrite): string
+{
+    $table = $state['table'];
+    $hidden = '<input type="hidden" name="action" value="dashboard">'
+        . '<input type="hidden" name="table" value="' . htmlspecialchars($table) . '">';
+
+    if ($state['sort'] !== null) {
+        $hidden .= '<input type="hidden" name="sort" value="' . htmlspecialchars($state['sort']) . '">'
+            . '<input type="hidden" name="dir" value="' . htmlspecialchars($state['dir']) . '">';
+    }
+
+    $bulkActionsBar = $canWrite
+        ? '<div class="lanter-bulk-actions" id="lanter-bulk-actions" hidden>'
+            . '<button type="button" class="lanter-btn lanter-btn-danger" id="lanter-bulk-delete-btn">' . lanter_icon('trash')
+            . '<span>Delete selected (<span id="lanter-bulk-count">0</span>)</span></button>'
+            . '</div>'
+        : '';
+
+    $perPageOptions = '';
+    foreach (Lanter_Config::PAGE_SIZES as $size) {
+        $perPageOptions .= '<option value="' . $size . '"' . ($size === $state['perPage'] ? ' selected' : '') . '>' . $size . ' / page</option>';
+    }
+
+    $hasFilters = $state['filters'] !== [];
+    $filterInputs = '';
+    foreach ($columnNames as $column) {
+        $value = $state['filters'][$column] ?? '';
+        $filterInputs .= '<label class="lanter-filter-field"><span>' . htmlspecialchars($column) . '</span>'
+            . '<input type="text" name="f[' . htmlspecialchars($column) . ']" value="' . htmlspecialchars($value) . '" placeholder="contains, = x, > 5, null"></label>';
+    }
+
+    $filtersPanel = '<div class="lanter-filters" id="lanter-filters"' . ($hasFilters ? '' : ' hidden') . '>'
+        . $filterInputs
+        . '<div class="lanter-filters-actions">'
+        . '<button class="lanter-btn" type="submit">Apply filters</button>'
+        . '<a class="lanter-btn lanter-btn-ghost" href="' . htmlspecialchars(lanter_grid_url($state, ['f' => null, 'page' => null])) . '">Clear</a>'
+        . '</div></div>';
+
+    $filterToggleClass = 'lanter-btn lanter-btn-ghost' . ($hasFilters ? ' lanter-btn-active' : '');
+    $filterCount = $hasFilters ? ' (' . count($state['filters']) . ')' : '';
+
+    return '<form class="lanter-toolbar" method="get" id="lanter-grid-form">'
+        . $hidden
+        . '<span class="lanter-search-wrap">' . lanter_icon('search')
+        . '<input class="lanter-search" type="text" name="q" id="lanter-grid-search" placeholder="Search in ' . htmlspecialchars($table) . '..." value="' . htmlspecialchars($state['search']) . '"></span>'
+        . '<button class="lanter-btn lanter-btn-ghost" type="submit">Search</button>'
+        . '<button class="' . $filterToggleClass . '" type="button" id="lanter-filter-toggle">' . lanter_icon('filter') . '<span>Filters' . $filterCount . '</span></button>'
+        . '<select class="lanter-select-inline" name="per_page" onchange="this.form.submit()">' . $perPageOptions . '</select>'
+        . $bulkActionsBar
+        . $filtersPanel
+        . '</form>';
+}
+
 function lanter_render_bulk_delete_script(string $table): string
 {
     $tableEscaped = htmlspecialchars($table, ENT_QUOTES);
+    $token = htmlspecialchars(lanter_csrf_token(), ENT_QUOTES);
 
     return <<<HTML
         <script>
@@ -231,6 +384,7 @@ function lanter_render_bulk_delete_script(string $table): string
                         form.appendChild(input);
                     }
 
+                    addField('_token', '{$token}');
                     addField('table', '{$tableEscaped}');
                     checked.forEach(function (cb) { addField('pks[]', cb.value); });
 
@@ -247,6 +401,7 @@ function lanter_render_row_actions(string $table, string $pkValue): string
     $editHref = '?action=row_edit&table=' . urlencode($table) . '&pk=' . urlencode($pkValue);
     $tableAttr = htmlspecialchars($table);
     $pkAttr = htmlspecialchars($pkValue);
+    $csrf = lanter_csrf_field();
 
     $editIcon = lanter_icon('pencil');
     $trashIcon = lanter_icon('trash');
@@ -255,6 +410,7 @@ function lanter_render_row_actions(string $table, string $pkValue): string
         <td class="lanter-row-actions">
             <a class="lanter-action-link" href="{$editHref}" title="Edit">{$editIcon}</a>
             <form method="post" action="?action=row_delete" onsubmit="return confirm('Delete this row?')">
+                {$csrf}
                 <input type="hidden" name="table" value="{$tableAttr}">
                 <input type="hidden" name="pk" value="{$pkAttr}">
                 <button class="lanter-action-link lanter-action-danger" type="submit" title="Delete">{$trashIcon}</button>
@@ -263,36 +419,16 @@ function lanter_render_row_actions(string $table, string $pkValue): string
         HTML;
 }
 
-function lanter_render_pagination(
-    string $table,
-    string $search,
-    int $page,
-    int $lastPage,
-    int $total,
-    ?string $sortColumn = null,
-    string $sortDirection = 'asc'
-): string {
-    $link = static function (int $targetPage) use ($table, $search, $sortColumn, $sortDirection): string {
-        $query = ['action' => 'dashboard', 'table' => $table, 'page' => $targetPage];
-
-        if ($search !== '') {
-            $query['q'] = $search;
-        }
-
-        if ($sortColumn !== null) {
-            $query['sort'] = $sortColumn;
-            $query['dir'] = $sortDirection;
-        }
-
-        return '?' . http_build_query($query);
-    };
+function lanter_render_pagination(array $state, int $lastPage, int $total): string
+{
+    $page = $state['page'];
 
     $prev = $page > 1
-        ? '<a class="lanter-page-link" href="' . htmlspecialchars($link($page - 1)) . '">&larr; Previous</a>'
+        ? '<a class="lanter-page-link" href="' . htmlspecialchars(lanter_grid_url($state, ['page' => $page - 1])) . '">&larr; Previous</a>'
         : '<span class="lanter-page-link disabled">&larr; Previous</span>';
 
     $next = $page < $lastPage
-        ? '<a class="lanter-page-link" href="' . htmlspecialchars($link($page + 1)) . '">Next &rarr;</a>'
+        ? '<a class="lanter-page-link" href="' . htmlspecialchars(lanter_grid_url($state, ['page' => $page + 1])) . '">Next &rarr;</a>'
         : '<span class="lanter-page-link disabled">Next &rarr;</span>';
 
     return <<<HTML

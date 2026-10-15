@@ -33,7 +33,7 @@ function lanter_column_input_spec(string $type): array
         return ['kind' => 'time', 'step' => null, 'options' => null];
     }
 
-    if (preg_match('/\b(text|blob|json)\b/', $normalized) === 1) {
+    if (preg_match('/text|blob|json|bytea/', $normalized) === 1) {
         return ['kind' => 'textarea', 'step' => null, 'options' => null];
     }
 
