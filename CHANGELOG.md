@@ -6,6 +6,8 @@ All notable changes to Lanter are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-15
+
 ### Added
 
 - Driver contract tests that run against live MySQL/MariaDB and PostgreSQL servers when `LANTER_TEST_MYSQL` / `LANTER_TEST_PGSQL` are set; CI now provisions both.
@@ -48,6 +50,7 @@ All notable changes to Lanter are documented here. The format follows
 
 First published single-file release: table and view browsing, data grid with search, sorting and bulk delete, row forms, visual table builder, view creation, SQL console and SQL export for SQLite and MySQL/MariaDB.
 
-[Unreleased]: https://github.com/AdaiasMagdiel/lanter/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/AdaiasMagdiel/lanter/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/AdaiasMagdiel/lanter/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/AdaiasMagdiel/lanter/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/AdaiasMagdiel/lanter/releases/tag/v0.1.0

@@ -1,6 +1,6 @@
 <?php
 
-defined('LANTER_VERSION') || define('LANTER_VERSION', '0.2.0');
+defined('LANTER_VERSION') || define('LANTER_VERSION', '0.2.1');
 
 final class Lanter_Config
 {
