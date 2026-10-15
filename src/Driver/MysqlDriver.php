@@ -1,8 +1,7 @@
 <?php
 
-class Lanter_MysqlDriver implements Lanter_DriverInterface
+class Lanter_MysqlDriver extends Lanter_PdoDriver
 {
-    private PDO $pdo;
     private string $database;
 
     public function connect(array $connection): void
@@ -18,8 +17,17 @@ class Lanter_MysqlDriver implements Lanter_DriverInterface
         }
 
         $this->pdo = new PDO($dsn, $connection['user'] ?? '', $connection['password'] ?? '');
-        $this->pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-        $this->pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+        $this->configurePdo();
+    }
+
+    protected function textCastType(): string
+    {
+        return 'CHAR';
+    }
+
+    protected function emptyInsertClause(): string
+    {
+        return '() VALUES ()';
     }
 
     public function supportsDatabases(): bool
@@ -48,21 +56,9 @@ class Lanter_MysqlDriver implements Lanter_DriverInterface
         return array_column($stmt->fetchAll(PDO::FETCH_NUM), 0);
     }
 
-    public function createView(string $name, string $query): void
-    {
-        $query = rtrim(trim($query), ';');
-
-        if (str_contains($query, ';')) {
-            throw new InvalidArgumentException('The view query must be a single SELECT statement.');
-        }
-
-        $this->pdo->exec(sprintf('CREATE VIEW %s AS %s', $this->quoteIdentifier($name), $query));
-    }
-
     public function describeTable(string $table): array
     {
-        $stmt = $this->pdo->prepare('DESCRIBE ' . $this->quoteIdentifier($table));
-        $stmt->execute();
+        $stmt = $this->pdo->query('DESCRIBE ' . $this->quoteIdentifier($table));
 
         $columns = [];
         foreach ($stmt->fetchAll() as $row) {
@@ -79,125 +75,46 @@ class Lanter_MysqlDriver implements Lanter_DriverInterface
         return $columns;
     }
 
-    public function fetchRows(
-        string $table,
-        int $limit,
-        int $offset,
-        ?string $search = null,
-        ?string $sortColumn = null,
-        string $sortDirection = 'asc'
-    ): array {
-        [$where, $params] = $this->buildSearchClause($table, $search);
-        $orderBy = $sortColumn !== null
-            ? ' ORDER BY ' . $this->quoteIdentifier($sortColumn) . ($sortDirection === 'desc' ? ' DESC' : ' ASC')
-            : '';
-
-        $sql = sprintf(
-            'SELECT * FROM %s%s%s LIMIT %d OFFSET %d',
-            $this->quoteIdentifier($table),
-            $where,
-            $orderBy,
-            $limit,
-            $offset
-        );
-
-        $stmt = $this->pdo->prepare($sql);
-        $stmt->execute($params);
-
-        return $stmt->fetchAll();
-    }
-
-    public function countRows(string $table, ?string $search = null): int
+    public function listIndexes(string $table): array
     {
-        [$where, $params] = $this->buildSearchClause($table, $search);
+        $rows = $this->pdo->query('SHOW INDEX FROM ' . $this->quoteIdentifier($table))->fetchAll();
+        $indexes = [];
 
-        $stmt = $this->pdo->prepare('SELECT COUNT(*) AS total FROM ' . $this->quoteIdentifier($table) . $where);
-        $stmt->execute($params);
-
-        return (int) $stmt->fetch()['total'];
-    }
-
-    /** @return array{0: string, 1: array<string, string>} */
-    private function buildSearchClause(string $table, ?string $search): array
-    {
-        if ($search === null || $search === '') {
-            return ['', []];
+        foreach ($rows as $row) {
+            $name = $row['Key_name'];
+            $indexes[$name] ??= [
+                'name' => $name,
+                'columns' => [],
+                'unique' => (int) $row['Non_unique'] === 0,
+                'primary' => $name === 'PRIMARY',
+            ];
+            $indexes[$name]['columns'][(int) $row['Seq_in_index']] = $row['Column_name'];
         }
 
-        $columns = array_column($this->describeTable($table), 'name');
-
-        if ($columns === []) {
-            return ['', []];
+        foreach ($indexes as &$index) {
+            ksort($index['columns']);
+            $index['columns'] = array_values($index['columns']);
         }
 
-        $conditions = array_map(
-            fn (string $column): string => 'CAST(' . $this->quoteIdentifier($column) . ' AS CHAR) LIKE :__search',
-            $columns
-        );
-
-        return [' WHERE ' . implode(' OR ', $conditions), ['__search' => '%' . $search . '%']];
+        return array_values($indexes);
     }
 
-    public function findRow(string $table, string $primaryKey, mixed $primaryValue): ?array
+    public function listForeignKeys(string $table): array
     {
-        $sql = sprintf(
-            'SELECT * FROM %s WHERE %s = :__pk LIMIT 1',
-            $this->quoteIdentifier($table),
-            $this->quoteIdentifier($primaryKey)
+        $stmt = $this->pdo->prepare(
+            'SELECT CONSTRAINT_NAME AS name, COLUMN_NAME AS col, REFERENCED_TABLE_NAME AS ref_table, REFERENCED_COLUMN_NAME AS ref_column
+             FROM information_schema.KEY_COLUMN_USAGE
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND REFERENCED_TABLE_NAME IS NOT NULL
+             ORDER BY CONSTRAINT_NAME, ORDINAL_POSITION'
         );
+        $stmt->execute([$table]);
 
-        $stmt = $this->pdo->prepare($sql);
-        $stmt->execute(['__pk' => $primaryValue]);
-
-        $row = $stmt->fetch();
-
-        return $row === false ? null : $row;
-    }
-
-    public function insertRow(string $table, array $data): void
-    {
-        $columns = array_keys($data);
-        $placeholders = array_map(static fn (string $column): string => ':' . $column, $columns);
-
-        $sql = sprintf(
-            'INSERT INTO %s (%s) VALUES (%s)',
-            $this->quoteIdentifier($table),
-            implode(', ', array_map($this->quoteIdentifier(...), $columns)),
-            implode(', ', $placeholders)
-        );
-
-        $stmt = $this->pdo->prepare($sql);
-        $stmt->execute($data);
-    }
-
-    public function updateRow(string $table, string $primaryKey, mixed $primaryValue, array $data): void
-    {
-        $assignments = implode(', ', array_map(
-            fn (string $column): string => $this->quoteIdentifier($column) . ' = :' . $column,
-            array_keys($data)
-        ));
-
-        $sql = sprintf(
-            'UPDATE %s SET %s WHERE %s = :__pk',
-            $this->quoteIdentifier($table),
-            $assignments,
-            $this->quoteIdentifier($primaryKey)
-        );
-
-        $stmt = $this->pdo->prepare($sql);
-        $stmt->execute([...$data, '__pk' => $primaryValue]);
-    }
-
-    public function deleteRow(string $table, string $primaryKey, mixed $primaryValue): void
-    {
-        $sql = sprintf(
-            'DELETE FROM %s WHERE %s = :__pk',
-            $this->quoteIdentifier($table),
-            $this->quoteIdentifier($primaryKey)
-        );
-
-        $stmt = $this->pdo->prepare($sql);
-        $stmt->execute(['__pk' => $primaryValue]);
+        return array_map(static fn (array $row): array => [
+            'name' => $row['name'],
+            'column' => $row['col'],
+            'refTable' => $row['ref_table'],
+            'refColumn' => $row['ref_column'],
+        ], $stmt->fetchAll());
     }
 
     /** @param array<int, array{name: string, type: string, nullable: bool, primaryKey: bool, autoIncrement: bool}> $columns */
@@ -231,32 +148,19 @@ class Lanter_MysqlDriver implements Lanter_DriverInterface
         $this->pdo->exec(sprintf('CREATE TABLE %s (%s)', $this->quoteIdentifier($table), implode(', ', $defs)));
     }
 
-    public function runQuery(string $sql): array
+    public function renameTable(string $from, string $to): void
     {
-        $stmt = $this->pdo->query($sql);
+        $this->pdo->exec(sprintf('RENAME TABLE %s TO %s', $this->quoteIdentifier($from), $this->quoteIdentifier($to)));
+    }
 
-        if ($stmt === false) {
-            return ['columns' => [], 'rows' => [], 'affected' => 0];
-        }
-
-        if ($stmt->columnCount() === 0) {
-            return ['columns' => [], 'rows' => [], 'affected' => $stmt->rowCount()];
-        }
-
-        $rows = $stmt->fetchAll();
-        $columns = $rows === [] ? [] : array_keys($rows[0]);
-
-        return ['columns' => $columns, 'rows' => $rows, 'affected' => count($rows)];
+    public function dropIndex(string $table, string $name): void
+    {
+        $this->pdo->exec(sprintf('DROP INDEX %s ON %s', $this->quoteIdentifier($name), $this->quoteIdentifier($table)));
     }
 
     public function quoteIdentifier(string $identifier): string
     {
         return '`' . str_replace('`', '``', $identifier) . '`';
-    }
-
-    public function quoteValue(mixed $value): string
-    {
-        return $value === null ? 'NULL' : $this->pdo->quote((string) $value);
     }
 
     public function getCreateStatement(string $name, bool $isView): string
