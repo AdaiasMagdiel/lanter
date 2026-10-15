@@ -33,4 +33,31 @@ foreach ([
     require_once $root . '/' . $file;
 }
 
+require_once __DIR__ . '/DriverContractTestCase.php';
+
 $_SESSION = [];
+
+/** Parses "host=..;port=..;database=..;user=..;password=.." from the environment into a Lanter connection. */
+function lanter_test_connection_from_env(string $variable, string $driver): ?array
+{
+    $raw = getenv($variable);
+
+    if ($raw === false || trim($raw) === '') {
+        return null;
+    }
+
+    $connection = ['driver' => $driver];
+
+    foreach (explode(';', $raw) as $pair) {
+        if (!str_contains($pair, '=')) {
+            continue;
+        }
+
+        [$key, $value] = explode('=', $pair, 2);
+        $connection[trim($key)] = trim($value);
+    }
+
+    $connection['port'] = (int) ($connection['port'] ?? ($driver === 'pgsql' ? 5432 : 3306));
+
+    return $connection;
+}
