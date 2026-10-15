@@ -618,7 +618,18 @@ composer install
 composer test
 ```
 
-CI runs the same suite on PHP 8.1 through 8.4. Pushing a tag that starts
+The same driver contract runs against real MySQL/MariaDB and PostgreSQL
+servers when these variables are set (the tests are skipped otherwise, and
+they create and drop `lt_*` tables in the given database):
+
+```bash
+LANTER_TEST_MYSQL="host=127.0.0.1;port=3306;database=lanter_test;user=root;password=secret" \
+LANTER_TEST_PGSQL="host=127.0.0.1;port=5432;database=lanter_test;user=postgres;password=secret" \
+composer test
+```
+
+CI runs the full suite, with both servers provisioned, on PHP 8.1 through
+8.4. Pushing a tag that starts
 with `v` additionally creates a GitHub release with `lanter.php` attached.
 See [CHANGELOG.md](CHANGELOG.md) for what changed between versions.
 

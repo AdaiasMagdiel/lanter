@@ -6,6 +6,15 @@ All notable changes to Lanter are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Driver contract tests that run against live MySQL/MariaDB and PostgreSQL servers when `LANTER_TEST_MYSQL` / `LANTER_TEST_PGSQL` are set; CI now provisions both.
+
+### Fixed
+
+- SQL import on MySQL failed with "no active transaction" after a DDL statement, because MySQL auto-commits DDL. `commit()` now tolerates an already-ended transaction.
+- Editing a row no longer tries to write an empty primary key when the field is missing from the form.
+
 ## [0.2.0] - 2026-10-15
 
 ### Added
