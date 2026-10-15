@@ -6,8 +6,10 @@ $root = __DIR__;
 
 $sourceFiles = [
     'src/Driver/DriverInterface.php',
+    'src/Driver/PdoDriver.php',
     'src/Driver/SqliteDriver.php',
     'src/Driver/MysqlDriver.php',
+    'src/Driver/PgsqlDriver.php',
     'src/Config.php',
     'src/Auth.php',
     'src/Types.php',
@@ -18,8 +20,10 @@ $sourceFiles = [
     'src/Actions/logout.php',
     'src/Actions/dashboard.php',
     'src/Actions/table_create.php',
+    'src/Actions/table_alter.php',
     'src/Actions/view_create.php',
     'src/Actions/table_export.php',
+    'src/Actions/table_import.php',
     'src/Actions/table_structure.php',
     'src/Actions/row_form.php',
     'src/Actions/row_delete.php',
@@ -45,10 +49,10 @@ $css = preg_replace('/\s+/', ' ', $css);
 $css = trim($css);
 
 $cssLiteral = var_export($css, true);
-$body .= "function lanter_css(): string\n{\n    return {$cssLiteral};\n}\n\n";
-$body .= "lanter_run();\n";
+$body .= "function lanter_css(): string\n{\n    return {$cssLiteral};\n}\n";
 
-$output = "<?php\n\n" . $body;
+// Guarding the declarations lets long-running workers include the file once per request.
+$output = "<?php\n\nif (!function_exists('lanter_run')) {\n" . $body . "}\n\nlanter_run();\n";
 
 // Token-based (not regex) so strings, heredocs and inline HTML are never touched.
 function lanter_minify_php(string $code): string
@@ -80,7 +84,10 @@ function lanter_minify_php(string $code): string
 
 $output = lanter_minify_php($output);
 
-@mkdir($root . '/dist', 0777, true);
-file_put_contents($root . '/dist/lanter.php', $output);
+// An explicit target lets CI build to a temp file and diff it against dist/.
+$target = $argv[1] ?? $root . '/dist/lanter.php';
 
-echo 'Built dist/lanter.php (' . strlen($output) . " bytes)\n";
+@mkdir(dirname($target), 0777, true);
+file_put_contents($target, $output);
+
+echo 'Built ' . $target . ' (' . strlen($output) . " bytes)\n";
