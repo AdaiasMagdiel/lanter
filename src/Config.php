@@ -1,7 +1,11 @@
 <?php
 
+defined('LANTER_VERSION') || define('LANTER_VERSION', '0.2.0');
+
 final class Lanter_Config
 {
+    public const PAGE_SIZES = [25, 50, 100, 250, 500];
+
     private array $data;
 
     private function __construct(array $data)
@@ -17,13 +21,17 @@ final class Lanter_Config
                 'delegate' => null,
             ],
             'connections' => [],
-            'allow_ui_connections' => true,
-            'data_file' => __DIR__ . '/lanter_data.sqlite',
+            'per_page' => 25,
+            'sql_history' => 20,
         ];
 
-        $external = defined('LANTER_CONFIG') ? LANTER_CONFIG : [];
+        // The constant is the documented form; the global is the fallback for
+        // long-running workers where define() would fail on the second request.
+        $external = defined('LANTER_CONFIG')
+            ? LANTER_CONFIG
+            : ($GLOBALS['LANTER_CONFIG'] ?? []);
 
-        return new self(array_replace_recursive($defaults, $external));
+        return new self(array_replace_recursive($defaults, is_array($external) ? $external : []));
     }
 
     public function authMode(): string
@@ -42,13 +50,15 @@ final class Lanter_Config
         return $this->data['connections'];
     }
 
-    public function allowUiConnections(): bool
+    public function perPage(): int
     {
-        return $this->data['allow_ui_connections'];
+        $perPage = (int) $this->data['per_page'];
+
+        return in_array($perPage, self::PAGE_SIZES, true) ? $perPage : 25;
     }
 
-    public function dataFile(): string
+    public function sqlHistorySize(): int
     {
-        return $this->data['data_file'];
+        return max(0, (int) $this->data['sql_history']);
     }
 }

@@ -21,6 +21,12 @@ final class Lanter_Auth
         };
     }
 
+    /** Whether a null connection means "denied" (delegate) rather than "not signed in yet". */
+    public function deniesWhenUnresolved(): bool
+    {
+        return $this->config->authMode() === 'delegate';
+    }
+
     public function logout(): void
     {
         unset($_SESSION['lanter_connection']);
@@ -28,10 +34,6 @@ final class Lanter_Auth
 
     private function resolveNoneMode(): ?array
     {
-        if (isset($_SESSION['lanter_connection'])) {
-            return $_SESSION['lanter_connection'];
-        }
-
         $connections = $this->config->fixedConnections();
 
         if ($connections === []) {
@@ -41,6 +43,10 @@ final class Lanter_Auth
         if (isset($_GET['conn']) && isset($connections[$_GET['conn']])) {
             $_SESSION['lanter_connection'] = $connections[$_GET['conn']];
 
+            return $_SESSION['lanter_connection'];
+        }
+
+        if (isset($_SESSION['lanter_connection'])) {
             return $_SESSION['lanter_connection'];
         }
 
@@ -59,7 +65,17 @@ final class Lanter_Auth
 
         $connection = $delegate();
 
-        return is_array($connection) ? $connection : null;
+        if (!is_array($connection)) {
+            return null;
+        }
+
+        // Database switching (MySQL/Postgres) needs per-session state even when
+        // the delegate owns the credentials; only the chosen database is kept.
+        if (isset($_SESSION['lanter_delegate_database']) && ($connection['database'] ?? '') === '') {
+            $connection['database'] = $_SESSION['lanter_delegate_database'];
+        }
+
+        return $connection;
     }
 
     private function resolveLoginMode(): ?array
@@ -69,6 +85,12 @@ final class Lanter_Auth
 
     public function login(array $connection): void
     {
+        if ($this->config->authMode() === 'delegate') {
+            $_SESSION['lanter_delegate_database'] = $connection['database'] ?? '';
+
+            return;
+        }
+
         $_SESSION['lanter_connection'] = $connection;
     }
 }

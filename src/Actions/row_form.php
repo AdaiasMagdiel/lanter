@@ -2,6 +2,8 @@
 
 function lanter_action_row_new(Lanter_Config $config, Lanter_Auth $auth, ?array $connection): void
 {
+    lanter_assert_writable($connection);
+
     $driver = lanter_make_driver($connection);
     $tables = $driver->listTables();
     $views = $driver->listViews();
@@ -9,8 +11,6 @@ function lanter_action_row_new(Lanter_Config $config, Lanter_Auth $auth, ?array 
 
     if (!in_array($table, $tables, true)) {
         lanter_redirect('dashboard');
-
-        return;
     }
 
     $columns = $driver->describeTable($table);
@@ -22,11 +22,12 @@ function lanter_action_row_new(Lanter_Config $config, Lanter_Auth $auth, ?array 
 
         try {
             $driver->insertRow($table, $data);
-            lanter_redirect('dashboard', ['table' => $table]);
-
-            return;
         } catch (Throwable $e) {
             $error = 'Could not insert: ' . $e->getMessage();
+        }
+
+        if ($error === null) {
+            lanter_redirect('dashboard', ['table' => $table]);
         }
     }
 
@@ -44,6 +45,8 @@ function lanter_action_row_new(Lanter_Config $config, Lanter_Auth $auth, ?array 
 
 function lanter_action_row_edit(Lanter_Config $config, Lanter_Auth $auth, ?array $connection): void
 {
+    lanter_assert_writable($connection);
+
     $driver = lanter_make_driver($connection);
     $tables = $driver->listTables();
     $views = $driver->listViews();
@@ -52,8 +55,6 @@ function lanter_action_row_edit(Lanter_Config $config, Lanter_Auth $auth, ?array
 
     if (!in_array($table, $tables, true) || $pkValue === null) {
         lanter_redirect('dashboard');
-
-        return;
     }
 
     $columns = $driver->describeTable($table);
@@ -61,8 +62,6 @@ function lanter_action_row_edit(Lanter_Config $config, Lanter_Auth $auth, ?array
 
     if ($primaryKey === null) {
         lanter_redirect('dashboard', ['table' => $table]);
-
-        return;
     }
 
     $error = null;
@@ -72,11 +71,12 @@ function lanter_action_row_edit(Lanter_Config $config, Lanter_Auth $auth, ?array
 
         try {
             $driver->updateRow($table, $primaryKey, $_POST['__pk_original'] ?? $pkValue, $data);
-            lanter_redirect('dashboard', ['table' => $table]);
-
-            return;
         } catch (Throwable $e) {
             $error = 'Could not update: ' . $e->getMessage();
+        }
+
+        if ($error === null) {
+            lanter_redirect('dashboard', ['table' => $table]);
         }
     }
 
@@ -84,8 +84,6 @@ function lanter_action_row_edit(Lanter_Config $config, Lanter_Auth $auth, ?array
 
     if ($row === null) {
         lanter_redirect('dashboard', ['table' => $table]);
-
-        return;
     }
 
     $content = lanter_render_row_form(
@@ -167,14 +165,15 @@ function lanter_render_row_form(
             $column['nullable'] ? 'nullable' : null,
             $isAutoIncrementPk ? 'auto-increment' : null,
         ]);
-        $hint = implode(', ', $hintParts);
+        $hint = htmlspecialchars(implode(', ', $hintParts));
+        $nameHtml = htmlspecialchars($name);
         $input = $isInsert && $isAutoIncrementPk
             ? '<input type="text" value="" placeholder="Auto-generated on insert" disabled>'
             : lanter_render_field_input($column, $values[$name] ?? null);
 
         $fields .= <<<HTML
             <div class="lanter-field">
-                <label>{$name} <span class="lanter-hint">({$hint})</span></label>
+                <label>{$nameHtml} <span class="lanter-hint">({$hint})</span></label>
                 {$input}
             </div>
             HTML;
@@ -191,12 +190,14 @@ function lanter_render_row_form(
     $backLink = '?action=dashboard&table=' . urlencode($table);
     $saveIcon = lanter_icon('check');
     $cancelIcon = lanter_icon('close');
+    $csrf = lanter_csrf_field();
 
     return <<<HTML
         <div class="lanter-panel lanter-form-panel">
             <h2 class="lanter-form-title">{$title}</h2>
             {$errorHtml}
             <form method="post" action="{$action}">
+                {$csrf}
                 {$hiddenPk}
                 {$fields}
                 <div class="lanter-form-actions">
@@ -211,7 +212,7 @@ function lanter_render_row_form(
 /** @param array{name: string, type: string, nullable: bool, default: ?string, key: string} $column */
 function lanter_render_field_input(array $column, mixed $rawValue): string
 {
-    $name = $column['name'];
+    $name = htmlspecialchars($column['name']);
     $spec = lanter_column_input_spec($column['type']);
     $kind = $spec['kind'];
     $value = lanter_format_value_for_display($kind, $rawValue);

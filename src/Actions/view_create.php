@@ -2,6 +2,8 @@
 
 function lanter_action_view_create(Lanter_Config $config, Lanter_Auth $auth, ?array $connection): void
 {
+    lanter_assert_writable($connection);
+
     $driver = lanter_make_driver($connection);
     $tables = $driver->listTables();
     $views = $driver->listViews();
@@ -11,7 +13,7 @@ function lanter_action_view_create(Lanter_Config $config, Lanter_Auth $auth, ?ar
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         try {
-            if ($viewName === '' || preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $viewName) !== 1) {
+            if (!lanter_is_valid_identifier($viewName)) {
                 throw new InvalidArgumentException('View name must start with a letter or underscore and contain only letters, numbers and underscores.');
             }
 
@@ -20,11 +22,12 @@ function lanter_action_view_create(Lanter_Config $config, Lanter_Auth $auth, ?ar
             }
 
             $driver->createView($viewName, $query);
-            lanter_redirect('dashboard', ['table' => $viewName]);
-
-            return;
         } catch (Throwable $e) {
             $error = 'Could not create view: ' . $e->getMessage();
+        }
+
+        if ($error === null) {
+            lanter_redirect('dashboard', ['table' => $viewName]);
         }
     }
 
@@ -38,12 +41,14 @@ function lanter_render_view_create_form(string $viewName, string $query, ?string
     $nameEscaped = htmlspecialchars($viewName);
     $queryEscaped = htmlspecialchars($query);
     $errorHtml = $error !== null ? '<p class="lanter-form-error">' . htmlspecialchars($error) . '</p>' : '';
+    $csrf = lanter_csrf_field();
 
     return <<<HTML
         <div class="lanter-panel lanter-form-panel lanter-table-create-panel">
             <h2 class="lanter-form-title">New view</h2>
             {$errorHtml}
             <form method="post" action="?action=view_create">
+                {$csrf}
                 <div class="lanter-field">
                     <label>View name</label>
                     <input type="text" name="view_name" value="{$nameEscaped}" placeholder="active_users" required>

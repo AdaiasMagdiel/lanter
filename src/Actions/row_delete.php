@@ -2,6 +2,8 @@
 
 function lanter_action_row_delete(Lanter_Config $config, Lanter_Auth $auth, ?array $connection): void
 {
+    lanter_assert_writable($connection);
+
     $driver = lanter_make_driver($connection);
     $tables = $driver->listTables();
     $table = $_POST['table'] ?? '';
@@ -9,8 +11,6 @@ function lanter_action_row_delete(Lanter_Config $config, Lanter_Auth $auth, ?arr
 
     if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !in_array($table, $tables, true) || $pkValue === null) {
         lanter_redirect('dashboard');
-
-        return;
     }
 
     $columns = $driver->describeTable($table);
@@ -25,6 +25,8 @@ function lanter_action_row_delete(Lanter_Config $config, Lanter_Auth $auth, ?arr
 
 function lanter_action_row_bulk_delete(Lanter_Config $config, Lanter_Auth $auth, ?array $connection): void
 {
+    lanter_assert_writable($connection);
+
     $driver = lanter_make_driver($connection);
     $tables = $driver->listTables();
     $table = $_POST['table'] ?? '';
@@ -32,15 +34,23 @@ function lanter_action_row_bulk_delete(Lanter_Config $config, Lanter_Auth $auth,
 
     if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !in_array($table, $tables, true) || !is_array($pkValues)) {
         lanter_redirect('dashboard');
-
-        return;
     }
 
     $primaryKey = lanter_primary_key($driver->describeTable($table));
 
     if ($primaryKey !== null) {
-        foreach ($pkValues as $pkValue) {
-            $driver->deleteRow($table, $primaryKey, $pkValue);
+        $driver->beginTransaction();
+
+        try {
+            foreach ($pkValues as $pkValue) {
+                $driver->deleteRow($table, $primaryKey, $pkValue);
+            }
+
+            $driver->commit();
+        } catch (Throwable $e) {
+            $driver->rollBack();
+
+            throw $e;
         }
     }
 

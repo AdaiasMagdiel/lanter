@@ -1,10 +1,20 @@
 <?php
 
-const LANTER_CUSTOM_TYPE_OPTION = '__custom__';
+defined('LANTER_CUSTOM_TYPE_OPTION') || define('LANTER_CUSTOM_TYPE_OPTION', '__custom__');
 
 /** @return array<int, string> */
 function lanter_table_builder_types(string $driver): array
 {
+    if ($driver === 'pgsql') {
+        return [
+            'INTEGER', 'BIGINT', 'SMALLINT',
+            'VARCHAR(255)', 'CHAR(36)', 'TEXT', 'JSONB', 'UUID',
+            'NUMERIC(10,2)', 'REAL', 'DOUBLE PRECISION',
+            'DATE', 'TIMESTAMP', 'TIMESTAMPTZ', 'TIME',
+            'BOOLEAN', 'BYTEA',
+        ];
+    }
+
     if ($driver === 'mysql' || $driver === 'mariadb') {
         return [
             'INT', 'BIGINT', 'SMALLINT', 'TINYINT', 'TINYINT(1)',
@@ -39,10 +49,12 @@ function lanter_is_safe_custom_type(string $type): bool
 
 function lanter_action_table_create(Lanter_Config $config, Lanter_Auth $auth, ?array $connection): void
 {
+    lanter_assert_writable($connection);
+
     $driver = lanter_make_driver($connection);
     $tables = $driver->listTables();
     $views = $driver->listViews();
-    $driverType = $connection['driver'] ?? 'sqlite';
+    $driverType = lanter_driver_kind($connection);
     $types = lanter_table_builder_types($driverType);
     $error = null;
     $tableName = trim((string) ($_POST['table_name'] ?? ''));
@@ -52,7 +64,7 @@ function lanter_action_table_create(Lanter_Config $config, Lanter_Auth $auth, ?a
         try {
             $columns = lanter_parse_table_builder_columns($submittedColumns ?? [], $types);
 
-            if ($tableName === '' || preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $tableName) !== 1) {
+            if (!lanter_is_valid_identifier($tableName)) {
                 throw new InvalidArgumentException('Table name must start with a letter or underscore and contain only letters, numbers and underscores.');
             }
 
@@ -61,11 +73,12 @@ function lanter_action_table_create(Lanter_Config $config, Lanter_Auth $auth, ?a
             }
 
             $driver->createTable($tableName, $columns);
-            lanter_redirect('dashboard', ['table' => $tableName]);
-
-            return;
         } catch (Throwable $e) {
             $error = 'Could not create table: ' . $e->getMessage();
+        }
+
+        if ($error === null) {
+            lanter_redirect('dashboard', ['table' => $tableName]);
         }
     }
 
@@ -93,7 +106,7 @@ function lanter_parse_table_builder_columns(mixed $rawColumns, array $allowedTyp
             continue;
         }
 
-        if (preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $name) !== 1) {
+        if (!lanter_is_valid_identifier($name)) {
             throw new InvalidArgumentException('Column name "' . $name . '" must start with a letter or underscore and contain only letters, numbers and underscores.');
         }
 
@@ -144,15 +157,18 @@ function lanter_render_table_create_form(
     $autoIncrementHint = $isSqlite
         ? 'Auto-increment applies to a single INTEGER primary key column.'
         : 'Auto-increment applies to the primary key column.';
+    $csrf = lanter_csrf_field();
+    $tableNameEscaped = htmlspecialchars($tableName);
 
     return <<<HTML
         <div class="lanter-panel lanter-form-panel lanter-table-create-panel">
             <h2 class="lanter-form-title">New table</h2>
             {$errorHtml}
             <form method="post" action="?action=table_create" id="lanter-table-create-form">
+                {$csrf}
                 <div class="lanter-field">
                     <label>Table name</label>
-                    <input type="text" name="table_name" value="{$tableName}" placeholder="my_table" required>
+                    <input type="text" name="table_name" value="{$tableNameEscaped}" placeholder="my_table" required>
                 </div>
 
                 <div class="lanter-column-builder-head">
