@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.1', '8.2', '8.3', '8.4']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: pdo, pdo_sqlite, pdo_mysql, pdo_pgsql
+          coverage: none
+
+      - run: composer install --no-interaction --no-progress --prefer-dist
+
+      - name: Lint sources
+        run: for f in src/*.php src/*/*.php build.php; do php -l "$f" > /dev/null || exit 1; done
+
+      - name: Run tests (includes dist/lanter.php sync check)
+        run: vendor/bin/phpunit
+
+  release:
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/lanter.php
+          generate_release_notes: true
